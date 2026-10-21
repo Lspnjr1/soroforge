@@ -42,6 +42,7 @@ func newHistoryCmd() *cobra.Command {
 		failures bool
 		limit    int
 		sinceRaw string
+		format   string
 	)
 
 	cmd := &cobra.Command{
@@ -100,6 +101,9 @@ The subcommands move the whole history between databases:
 				if limit > 0 && len(attempts) > limit {
 					attempts = attempts[:limit]
 				}
+				if format == "csv" {
+					return printFailuresCSV(alias, network, attempts)
+				}
 				return printFailures(alias, network, attempts)
 			}
 
@@ -126,6 +130,9 @@ The subcommands move the whole history between databases:
 				deployments = deployments[:limit]
 			}
 
+			if format == "csv" {
+				return printHistoryCSV(alias, network, deployments)
+			}
 			return printHistory(alias, network, deployments)
 		},
 	}
@@ -136,6 +143,7 @@ The subcommands move the whole history between databases:
 		"print the N newest records")
 	cmd.Flags().StringVar(&sinceRaw, "since", "",
 		"print records after a date (YYYY-MM-DD) or duration (e.g. 30d, 24h)")
+	cmd.Flags().StringVar(&format, "format", "table", "output format: table, csv, or json")
 	attachAliasCompletion(cmd)
 	cmd.AddCommand(newHistoryExportCmd(), newHistoryImportCmd())
 	return cmd

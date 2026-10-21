@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,34 @@ import (
 	"github.com/soroworks/soroforge/internal/netcheck"
 	"github.com/soroworks/soroforge/internal/store"
 )
+
+func printHistoryCSV(alias, network string, deployments []store.Deployment) error {
+	w := csv.NewWriter(out())
+	defer w.Flush()
+	if err := w.Write([]string{"alias", "network", "when", "action", "wasm_hash", "deployer", "ledger", "tx_hash", "notes"}); err != nil {
+		return err
+	}
+	for _, d := range deployments {
+		if err := w.Write([]string{alias, network, d.CreatedAt.UTC().Format(time.RFC3339), string(d.Action), d.WasmHash, d.DeployerPubkey, formatLedger(d.Ledger), d.TxHash, d.Notes}); err != nil {
+			return err
+		}
+	}
+	return w.Error()
+}
+
+func printFailuresCSV(alias, network string, attempts []store.Attempt) error {
+	w := csv.NewWriter(out())
+	defer w.Flush()
+	if err := w.Write([]string{"alias", "network", "when", "action", "stage", "tx_hash", "error"}); err != nil {
+		return err
+	}
+	for _, a := range attempts {
+		if err := w.Write([]string{alias, network, a.CreatedAt.UTC().Format(time.RFC3339), string(a.Action), string(a.Stage), a.TxHash, a.Error}); err != nil {
+			return err
+		}
+	}
+	return w.Error()
+}
 
 // Output goes to stdout; logs go to stderr. That split is what lets
 // `soroforge list --json | jq` work while logging is still on.
