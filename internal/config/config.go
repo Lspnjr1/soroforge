@@ -145,6 +145,10 @@ func explorerURL(base, kind, value string) string {
 
 // Contract is a contract SoroForge manages.
 type Contract struct {
+	// BuildCommand is run from the project directory before deployment when set.
+	// It should produce the configured WASM artifact and exit non-zero on failure.
+	BuildCommand string `yaml:"build_command"`
+
 	// Wasm is the path to the compiled contract artifact, relative to the
 	// config file's directory unless absolute.
 	Wasm string `yaml:"wasm"`
