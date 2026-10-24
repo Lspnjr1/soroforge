@@ -69,6 +69,9 @@ Three interfaces are the seams the whole design rests on:
 | `stellar.Signer` | `KeypairSigner` | `MockSigner` |
 | `store.Store` | `Postgres` | `MemoryStore` |
 
+For the deployment flow, package boundaries, and invariants to preserve, see
+the [architecture overview](ARCHITECTURE.md).
+
 The test doubles live in the packages themselves rather than in `_test.go`
 files, because other packages need them too. If you add a feature, you should be
 able to test it without provisioning anything.
