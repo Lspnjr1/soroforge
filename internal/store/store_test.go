@@ -484,6 +484,42 @@ func runStoreSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 		assert.Empty(t, otherNet, "attempts are scoped per network like everything else")
 	})
 
+	t.Run("pruning removes only attempts older than the cutoff", func(t *testing.T) {
+		s := newStore(t)
+		_, err := s.RecordAttempt(ctx, store.Attempt{
+			Alias: "flaky", Network: "testnet", Action: store.ActionDeploy,
+			Stage: store.AttemptSubmit, Error: "old failure",
+		})
+		require.NoError(t, err)
+		cutoff := time.Now().Add(20 * time.Millisecond)
+		time.Sleep(30 * time.Millisecond)
+		_, err = s.RecordAttempt(ctx, store.Attempt{
+			Alias: "flaky", Network: "testnet", Action: store.ActionUpgrade,
+			Stage: store.AttemptSubmit, Error: "new failure",
+		})
+		require.NoError(t, err)
+		_, err = s.RecordDeployment(ctx, store.Deployment{
+			Alias: "flaky", Network: "testnet", ContractID: "CFLAKY", WasmHash: "a",
+			Action: store.ActionDeploy, DeployerPubkey: "GABC", Actor: "cli",
+		})
+		require.NoError(t, err)
+
+		count, err := s.CountAttemptsBefore(ctx, cutoff)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+		removed, err := s.PruneAttempts(ctx, cutoff)
+		require.NoError(t, err)
+		assert.Equal(t, 1, removed)
+
+		attempts, err := s.Attempts(ctx, "testnet", "flaky")
+		require.NoError(t, err)
+		require.Len(t, attempts, 1)
+		assert.Equal(t, "new failure", attempts[0].Error)
+		history, err := s.History(ctx, "testnet", "flaky")
+		require.NoError(t, err)
+		require.Len(t, history, 1, "pruning attempts must not delete confirmed deployments")
+	})
+
 	t.Run("attempt error text never keeps key material", func(t *testing.T) {
 		// Error text may quote RPC responses — but a secret seed that reaches
 		// it must be redacted before the row is written, and again on read the

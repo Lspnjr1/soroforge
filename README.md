@@ -566,6 +566,7 @@ of an error printed mid-prompt.
 | `history <alias>` | Show a contract's full deploy/upgrade timeline, newest first; `--failures` shows failed attempts instead. |
 | `history export` | Write every tracked contract and deployment as versioned JSON (`--out FILE`, else stdout). |
 | `history import <file>` | Load an export into an empty database; `--merge` imports into a populated one. |
+| `history prune-failures` | Remove failed attempts older than `--older-than` (default `90d`); use `--dry-run` to count without deleting. |
 | `status <alias>` | Compare the on-chain WASM hash against the recorded one. |
 | `status --all` | Drift-check every tracked contract on the network, for a single CI gate. |
 | `diff <alias>` | Show the interface change between two recorded versions, read from the network's SoroVault; `--fail-on-breaking` gates CI. |
@@ -697,6 +698,15 @@ including `--json` — is safe to paste into a ticket.
 
 ```bash
 soroforge history counter --failures
+```
+
+**`history prune-failures`** removes old failed attempts from the dedicated
+`deployment_attempts` table. Confirmed deployments remain in history. Preview
+the number of matching rows before deleting them:
+
+```sh
+soroforge history prune-failures --older-than 90d --dry-run
+soroforge history prune-failures --older-than 90d
 ```
 
 **`history export` / `history import`** move the entire recorded history

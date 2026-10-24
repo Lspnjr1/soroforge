@@ -268,6 +268,13 @@ type Store interface {
 	// Attempts returns a contract's failed attempts, newest first.
 	Attempts(ctx context.Context, network, alias string) ([]Attempt, error)
 
+	// CountAttemptsBefore returns the number of failed attempts older than before.
+	CountAttemptsBefore(ctx context.Context, before time.Time) (int, error)
+
+	// PruneAttempts deletes failed attempts older than before. Confirmed
+	// deployments are stored separately and are never affected.
+	PruneAttempts(ctx context.Context, before time.Time) (int, error)
+
 	// RenameContract renames a tracked contract's alias and all its history
 	// atomically. Returns ErrNotFound if the contract is not tracked on that
 	// network, or an error if the new alias already exists.
