@@ -49,3 +49,27 @@ func TestParseSince(t *testing.T) {
 		t.Fatal("expected error for invalid --since value, got nil")
 	}
 }
+
+func TestParsePruneAge(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		want  time.Duration
+	}{
+		{input: "90d", want: 90 * 24 * time.Hour},
+		{input: "2160h", want: 90 * 24 * time.Hour},
+	} {
+		got, err := parsePruneAge(tc.input)
+		if err != nil {
+			t.Fatalf("parsePruneAge(%q): %v", tc.input, err)
+		}
+		if got != tc.want {
+			t.Errorf("parsePruneAge(%q) = %s, want %s", tc.input, got, tc.want)
+		}
+	}
+
+	for _, input := range []string{"", "0d", "-1h", "not-a-duration"} {
+		if _, err := parsePruneAge(input); err == nil {
+			t.Errorf("parsePruneAge(%q) expected error", input)
+		}
+	}
+}

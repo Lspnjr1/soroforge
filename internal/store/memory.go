@@ -322,6 +322,44 @@ func (m *MemoryStore) Attempts(ctx context.Context, network, alias string) ([]At
 	return out, nil
 }
 
+// CountAttemptsBefore implements Store.
+func (m *MemoryStore) CountAttemptsBefore(ctx context.Context, before time.Time) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	n := 0
+	for _, attempt := range m.attempts {
+		if attempt.CreatedAt.Before(before) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// PruneAttempts implements Store.
+func (m *MemoryStore) PruneAttempts(ctx context.Context, before time.Time) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	kept := m.attempts[:0]
+	removed := 0
+	for _, attempt := range m.attempts {
+		if attempt.CreatedAt.Before(before) {
+			removed++
+			continue
+		}
+		kept = append(kept, attempt)
+	}
+	m.attempts = kept
+	return removed, nil
+}
+
 // Close implements Store. There is nothing to release.
 func (m *MemoryStore) Close() error { return nil }
 

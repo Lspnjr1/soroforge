@@ -419,6 +419,29 @@ func (s *SQLite) Attempts(ctx context.Context, network, alias string) ([]Attempt
 	return out, nil
 }
 
+// CountAttemptsBefore implements Store.
+func (s *SQLite) CountAttemptsBefore(ctx context.Context, before time.Time) (int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM deployment_attempts WHERE created_at < ?`, formatSQLiteTime(before)).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count old attempts: %w", err)
+	}
+	return count, nil
+}
+
+// PruneAttempts implements Store. Confirmed deployment rows are stored
+// separately and remain untouched.
+func (s *SQLite) PruneAttempts(ctx context.Context, before time.Time) (int, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM deployment_attempts WHERE created_at < ?`, formatSQLiteTime(before))
+	if err != nil {
+		return 0, fmt.Errorf("prune old attempts: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("prune old attempts: read affected row count: %w", err)
+	}
+	return int(count), nil
+}
+
 // scanSQLite* mirror their pgx counterparts but read timestamps as text,
 // which is how SQLite stores them.
 

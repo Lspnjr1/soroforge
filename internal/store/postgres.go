@@ -394,6 +394,25 @@ func (p *Postgres) Attempts(ctx context.Context, network, alias string) ([]Attem
 	return out, nil
 }
 
+// CountAttemptsBefore implements Store.
+func (p *Postgres) CountAttemptsBefore(ctx context.Context, before time.Time) (int, error) {
+	var count int
+	if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM deployment_attempts WHERE created_at < $1`, before).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count old attempts: %w", err)
+	}
+	return count, nil
+}
+
+// PruneAttempts implements Store. Deployment history lives in another table
+// and is not touched by this deletion.
+func (p *Postgres) PruneAttempts(ctx context.Context, before time.Time) (int, error) {
+	tag, err := p.pool.Exec(ctx, `DELETE FROM deployment_attempts WHERE created_at < $1`, before)
+	if err != nil {
+		return 0, fmt.Errorf("prune old attempts: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // importSnapshot implements snapshotImporter for Postgres.
 //
 // The identity columns are GENERATED ALWAYS, so inserting recorded ids needs

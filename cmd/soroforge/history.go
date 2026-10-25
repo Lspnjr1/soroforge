@@ -37,6 +37,19 @@ func parseSince(raw string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("invalid --since value %q: expected date (e.g. 2026-09-01) or duration (e.g. 30d, 24h)", raw)
 }
 
+func parsePruneAge(raw string) (time.Duration, error) {
+	if strings.HasSuffix(raw, "d") {
+		days, err := strconv.Atoi(strings.TrimSuffix(raw, "d"))
+		if err == nil && days > 0 && days <= int((1<<63-1)/(24*time.Hour)) {
+			return time.Duration(days) * 24 * time.Hour, nil
+		}
+	}
+	if duration, err := time.ParseDuration(raw); err == nil && duration > 0 {
+		return duration, nil
+	}
+	return 0, fmt.Errorf("invalid --older-than value %q: expected a positive duration (e.g. 90d or 2160h)", raw)
+}
+
 func newHistoryCmd() *cobra.Command {
 	var (
 		failures bool
@@ -137,7 +150,53 @@ The subcommands move the whole history between databases:
 	cmd.Flags().StringVar(&sinceRaw, "since", "",
 		"print records after a date (YYYY-MM-DD) or duration (e.g. 30d, 24h)")
 	attachAliasCompletion(cmd)
-	cmd.AddCommand(newHistoryExportCmd(), newHistoryImportCmd())
+	cmd.AddCommand(newHistoryExportCmd(), newHistoryImportCmd(), newHistoryPruneFailuresCmd())
+	return cmd
+}
+
+func newHistoryPruneFailuresCmd() *cobra.Command {
+	var (
+		olderThan string
+		dryRun    bool
+	)
+	cmd := &cobra.Command{
+		Use:   "prune-failures",
+		Short: "Remove failed attempts older than a duration",
+		Long: `Remove old failed deployment attempts while preserving confirmed
+deployment history. Use --dry-run to print the number of attempts that would
+be removed without changing the database.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			age, err := parsePruneAge(olderThan)
+			if err != nil {
+				return err
+			}
+			cutoff := time.Now().UTC().Add(-age)
+			a, err := newApp(cmd.Context(), appOptions{})
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+
+			var count int
+			if dryRun {
+				count, err = a.store.CountAttemptsBefore(cmd.Context(), cutoff)
+			} else {
+				count, err = a.store.PruneAttempts(cmd.Context(), cutoff)
+			}
+			if err != nil {
+				return err
+			}
+			if dryRun {
+				fmt.Fprintf(cmd.OutOrStdout(), "Would prune %d failed attempt(s) older than %s.\n", count, olderThan)
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "Pruned %d failed attempt(s) older than %s.\n", count, olderThan)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&olderThan, "older-than", "90d", "age threshold for failed attempts (e.g. 90d or 2160h)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "count matching failed attempts without deleting them")
 	return cmd
 }
 
