@@ -125,6 +125,10 @@ type DeployRequest struct {
 	// records nothing.
 	DryRun bool `json:"dry_run,omitempty"`
 
+	// ExtendTTL renews the new contract's instance and code TTLs to the
+	// network's maximum after the deploy confirms. Ignored on a dry run.
+	ExtendTTL bool `json:"extend_ttl,omitempty"`
+
 	// ConstructorArgs overrides the contract's configured constructor_args
 	// for this one deploy. A non-nil slice — including an empty one — replaces
 	// the resolved config value entirely; nil keeps it. The CLI sets this from
@@ -204,6 +208,17 @@ type DeployResult struct {
 	// Catalog reports registration with the network's sorovault_url. Absent
 	// on a dry run or when no registry is configured.
 	Catalog *CatalogStatus `json:"catalog,omitempty"`
+
+	// Extension reports the TTL extension --extend-ttl requested. Absent
+	// unless the extension succeeded.
+	Extension *ExtendResult `json:"extension,omitempty"`
+
+	// ExtensionError is set when --extend-ttl was requested but the
+	// extension failed after the deploy was confirmed and recorded. The
+	// contract is live; retrying the extension with `soroforge extend` is the
+	// recovery path, which is why this is reported rather than treated as a
+	// failed deploy.
+	ExtensionError string `json:"extension_error,omitempty"`
 
 	// Webhooks reports the outcome of delivering notifications to configured
 	// webhook endpoints. Absent on a dry run or when no webhooks are configured.
@@ -447,6 +462,16 @@ func (s *Service) Deploy(ctx context.Context, req DeployRequest) (_ *DeployResul
 		return nil, err
 	}
 	result.Deployment = deployment
+
+	if req.ExtendTTL && !req.DryRun {
+		result.Extension, result.ExtensionError = s.extendAfterChange(ctx, r, signer, store.Contract{
+			Alias:           r.Alias,
+			Network:         r.NetworkName,
+			ContractID:      contractID,
+			CurrentWasmHash: wasmHashHex,
+		}, req.Actor, log)
+	}
+
 	result.Catalog = s.publish(ctx, r, contractID, log)
 	result.Webhooks = s.notifyWebhooks(ctx, r.Network, WebhookPayload{
 		Alias:          r.Alias,

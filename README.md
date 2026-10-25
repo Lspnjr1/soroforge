@@ -101,6 +101,18 @@ doesn't expose one **cannot be upgraded**, and SoroForge will report the
 contract's own error. The entrypoint name defaults to `upgrade` and is
 configurable per contract via `upgrade_fn`.
 
+**TTLs expire, and archived contracts need restoring.** Every Soroban ledger
+entry has a TTL, and a contract's instance and code entries have their own. When
+one lapses the contract is *archived*: it still exists, but calling it fails
+until the entries are restored. Extending pays rent for more time and is much
+cheaper than restoring later, so `soroforge deploy` and `soroforge upgrade`
+accept `--extend-ttl`, which renews the new bytecode's entries to the network's
+maximum after the change confirms. For an existing contract, `soroforge extend`
+does the same on demand — run it before a quiet contract's TTL runs out.
+`soroforge status` reports an archived contract as such, and `soroforge restore`
+brings its entries back with the same address and bytecode. Both operations are
+recorded in history as their own actions.
+
 A confirmed transaction is not proof the code changed: an upgrade entrypoint
 could accept the call and do something else. So after the transaction confirms,
 SoroForge reads the contract's on-chain WASM hash back — retrying briefly while
@@ -225,9 +237,9 @@ cp .env.example .env
 ```
 
 Set `DATABASE_URL`, and a deployer key via either `SOROFORGE_SECRET_KEY` or
-`SOROFORGE_KEYSTORE_PATH`. Fund the account at
-<https://friendbot.stellar.org> if you haven't. Read the [security
-notes](#security-notes-on-key-handling) first.
+`SOROFORGE_KEYSTORE_PATH`. Check the account with `soroforge whoami`, and top it
+up with `soroforge fund` on networks configured with a Friendbot (the scaffolded
+testnet is). Read the [security notes](#security-notes-on-key-handling) first.
 
 **4. Dry run.** This assembles and simulates both transactions, prints the
 contract address a real deploy would produce, the estimated fee for each
@@ -270,6 +282,7 @@ networks:
     rpc_url: https://soroban-testnet.stellar.org
     passphrase: "Test SDF Network ; September 2015"
     sorovault_url: http://localhost:8080   # optional
+    friendbot_url: https://friendbot.stellar.org   # optional; enables `soroforge fund`
     explorer_url: https://stellar.expert/explorer/testnet  # optional
   mainnet:
     rpc_url: https://mainnet.sorobanrpc.com
@@ -562,8 +575,12 @@ of an error printed mid-prompt.
 | `deploy --all` | Deploy every configured contract not yet tracked on the network, in alias order. |
 | `upgrade <alias>` | Upload new WASM and invoke the contract's upgrade entrypoint. |
 | `upload <alias>` | Install WASM on-chain without deploying or upgrading; prints the hash for a governance proposal. |
+| `extend <alias>` | Renew a contract's instance and code TTLs before they lapse. |
+| `restore <alias>` | Restore a contract whose entries were archived, keeping its address. |
+| `fund` | Top up the deployer account from the network's Friendbot (test networks only). |
+| `whoami` | Show the deployer account, where its key came from, and its balance. |
 | `list` | List tracked contracts; `--network` filters. |
-| `history <alias>` | Show a contract's full deploy/upgrade timeline, newest first; `--failures` shows failed attempts instead. |
+| `history <alias>` | Show a contract's full deploy/upgrade/extend/restore timeline, newest first; `--failures` shows failed attempts instead. |
 | `history export` | Write every tracked contract and deployment as versioned JSON (`--out FILE`, else stdout). |
 | `history import <file>` | Load an export into an empty database; `--merge` imports into a populated one. |
 | `history prune-failures` | Remove failed attempts older than `--older-than` (default `90d`); use `--dry-run` to count without deleting. |
@@ -648,7 +665,9 @@ without a `sorovault_url` is an error naming it.
 |---|---|
 | `0` | In sync. |
 | `1` | The check could not be completed. |
-| `2` | Drift, untracked, or missing on-chain. |
+| `2` | Drift, untracked, missing, or archived on-chain. |
+
+The five states it reports:
 
 **`verify`** answers the question `status` cannot: is the WASM I just built
 the one that is live? It hashes the alias's local artifact and compares it with
@@ -670,6 +689,8 @@ The four `status` states:
   Someone changed it another way.
 - **`untracked`** — SoroForge has no record of this contract on this network.
 - **`missing`** — SoroForge has a record, but the chain has no such contract.
+- **`archived`** — the contract's TTL lapsed and it is no longer callable;
+  `soroforge restore <alias>` brings it back.
 
 **`networks` exit codes** make it usable as a CI preflight gate. Every
 configured network is probed concurrently, each under `--timeout` (default 5s):
@@ -1082,12 +1103,13 @@ signer needs a token, read it from the command's own environment.
 cmd/soroforge/      cobra CLI
 internal/config/    soroforge.yaml + env loading, validation, ScVal encoding
 internal/stellar/   RPC client, transaction assembly, signing (all interfaced)
-internal/deploy/    deploy/upgrade/status orchestration
+internal/deploy/    deploy/upgrade/status/extend/restore orchestration
 internal/store/     history: Postgres, SQLite, in-memory + embedded migrations
 internal/netcheck/  concurrent RPC health probes behind `soroforge networks`
 internal/api/       chi HTTP handlers mirroring the CLI
 internal/readiness/ database + per-network RPC probes behind GET /ready
 internal/catalog/   best-effort registration with SoroVault after a deploy
+internal/friendbot/ talk to a test network's Friendbot faucet
 ```
 
 Three interfaces are the seams: `stellar.Client` (RPC), `stellar.Signer`

@@ -494,6 +494,21 @@ func (e Env) MaxContractSizeBytes(def int) (int, error) {
 	return n, nil
 }
 
+// SigningSource labels where the signing key comes from, without reading it:
+// "env:SOROFORGE_SECRET_KEY" or "keystore:<path>". It returns "" when no key
+// source is configured. This is the safe half of SigningSeed, for commands
+// like `soroforge whoami` that report provenance but never the value.
+func (e Env) SigningSource() string {
+	switch {
+	case e.SecretKey != "":
+		return "env:" + EnvSecretKey
+	case e.KeystorePath != "":
+		return "keystore:" + e.KeystorePath
+	default:
+		return ""
+	}
+}
+
 // Redacted returns a copy safe to print or log: every secret is replaced with a
 // fixed placeholder, and the database URL keeps only its shape.
 func (e Env) Redacted() map[string]string {

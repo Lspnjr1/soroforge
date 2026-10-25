@@ -609,6 +609,8 @@ func TestActionValid(t *testing.T) {
 	assert.True(t, store.ActionDeploy.Valid())
 	assert.True(t, store.ActionUpgrade.Valid())
 	assert.True(t, store.ActionUpload.Valid())
+	assert.True(t, store.ActionExtend.Valid())
+	assert.True(t, store.ActionRestore.Valid())
 	assert.True(t, store.ActionInvoke.Valid())
 	assert.False(t, store.Action("rollback").Valid())
 	assert.False(t, store.Action("").Valid())

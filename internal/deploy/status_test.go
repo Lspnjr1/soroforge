@@ -91,6 +91,29 @@ func TestStatusMissingOnChain(t *testing.T) {
 	assert.Contains(t, result.Detail, "no instance")
 }
 
+func TestStatusArchived(t *testing.T) {
+	// An archived contract still exists, so it is neither missing nor in
+	// sync: it needs a restore before it can be called again, and the status
+	// must say so rather than reporting drift or absence.
+	h := newHarness(t, harnessOptions{})
+	ctx := context.Background()
+
+	_, err := h.store.UpsertContract(ctx, store.Contract{
+		Alias: "counter", Network: "testnet", ContractID: h.contractID,
+		CurrentWasmHash: stellar.HashHex(h.wasmHash),
+	})
+	require.NoError(t, err)
+	require.NoError(t, h.client.SetContractInstanceArchived(h.contractID, h.wasmHash))
+
+	result, err := h.svc.Status(ctx, deploy.StatusRequest{Alias: "counter"})
+	require.NoError(t, err)
+
+	assert.Equal(t, deploy.StateArchived, result.State)
+	assert.False(t, result.InSync())
+	assert.Contains(t, result.Detail, "archived")
+	assert.Contains(t, result.Detail, "soroforge restore counter")
+}
+
 func TestStatusIsPerNetwork(t *testing.T) {
 	// A contract in sync on testnet says nothing about mainnet.
 	h := newHarness(t, harnessOptions{})

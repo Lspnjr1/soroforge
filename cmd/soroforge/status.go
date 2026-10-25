@@ -25,7 +25,7 @@ single CI step can gate on all of them.
 Exit codes:
   0  in sync (with --all: every contract)
   1  the check could not be completed
-  2  drift, untracked, or missing on-chain (with --all: any contract)
+  2  drift, untracked, missing, or archived on-chain (with --all: any contract)
 
 The non-zero exit on drift makes this usable as a CI gate.`,
 		Args: func(cmd *cobra.Command, args []string) error {

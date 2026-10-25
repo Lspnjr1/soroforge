@@ -21,6 +21,7 @@ func newDeployCmd() *cobra.Command {
 		argFlags       []string
 		argsFile       string
 		progress       bool
+		extendTTL      bool
 		confirmTimeout time.Duration
 	)
 
@@ -121,6 +122,7 @@ refuses rather than hanging. --dry-run never prompts.`,
 				DryRun:      dryRun,
 				GitCommit:   gitCommit,
 				RequireSpec: requireSpec,
+				ExtendTTL:   extendTTL,
 				Actor:       "cli",
 			}
 
@@ -155,6 +157,8 @@ refuses rather than hanging. --dry-run never prompts.`,
 
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"assemble and simulate without submitting or recording anything")
+	cmd.Flags().BoolVar(&extendTTL, "extend-ttl", false,
+		"after confirming, extend the new contract's TTLs to the network's maximum")
 	cmd.Flags().BoolVar(&yes, "yes", false,
 		"skip the typed confirmation on protected networks (for CI)")
 	cmd.Flags().StringVar(&notes, "notes", "",

@@ -79,6 +79,12 @@ type Network struct {
 	// Passphrase is the network passphrase, e.g. "Test SDF Network ; September 2015".
 	Passphrase string `yaml:"passphrase"`
 
+	// FriendbotURL, when set, is the network's Friendbot endpoint, used by
+	// `soroforge fund` to top up the deployer's account. Test networks have
+	// one; mainnet does not, and its absence is what makes `fund` refuse to
+	// run there. Optional.
+	FriendbotURL string `yaml:"friendbot_url"`
+
 	// SoroVaultURL, when set, is a SoroVault registry serving this network.
 	// Every confirmed deploy and upgrade is registered there, so the
 	// contract's interface is discoverable as soon as it is live. Optional.

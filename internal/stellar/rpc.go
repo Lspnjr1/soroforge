@@ -207,6 +207,7 @@ func (c *RPCClient) LedgerEntries(ctx context.Context, keysB64 []string) ([]Ledg
 			KeyXDR:             e.KeyXDR,
 			DataXDR:            e.DataXDR,
 			LastModifiedLedger: e.LastModifiedLedger,
+			LiveUntilLedgerSeq: e.LiveUntilLedgerSeq,
 		})
 	}
 	return entries, nil

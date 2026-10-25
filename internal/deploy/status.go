@@ -28,9 +28,13 @@ const (
 	StateUntracked State = "untracked"
 
 	// StateMissing means SoroForge has a record but the ledger has no such
-	// contract — it was never deployed to this network, or its instance entry
-	// has expired.
+	// contract — it was never deployed to this network.
 	StateMissing State = "missing"
+
+	// StateArchived means the contract exists but its instance or code TTL
+	// has expired, so it cannot be called until it is restored. The bytecode
+	// is unchanged; `soroforge restore` brings it back.
+	StateArchived State = "archived"
 )
 
 // StatusRequest asks for a drift check.
@@ -271,8 +275,18 @@ func checkTracked(ctx context.Context, client stellar.Client, tracked store.Cont
 			result.State = StateMissing
 			result.Detail = fmt.Sprintf(
 				"SoroForge records %s as deployed at %s on %s, but that contract has no instance "+
-					"on-chain (never deployed to this network, or its instance entry expired)",
+					"on-chain (never deployed to this network)",
 				tracked.Alias, tracked.ContractID, tracked.Network)
+			return result, nil
+		}
+
+		var archived *stellar.ErrContractArchived
+		if errors.As(err, &archived) {
+			result.State = StateArchived
+			result.Detail = fmt.Sprintf(
+				"%s on %s is archived: its TTL expired and it is no longer callable; "+
+					"run `soroforge restore %s` to bring it back",
+				tracked.Alias, tracked.Network, tracked.Alias)
 			return result, nil
 		}
 		var sacErr *stellar.ErrStellarAssetContract

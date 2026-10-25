@@ -112,6 +112,21 @@ func TestPrintDeployResultJSONIncludesEstimatedFees(t *testing.T) {
 	assert.Equal(t, "0.0012445", total["total_xlm"])
 }
 
+func TestDescribeLedgers(t *testing.T) {
+	// TTLs are counted in ledgers; the output translates them to wall-clock
+	// time at Stellar's ~5-second close time so the number means something.
+	tests := map[uint32]string{
+		0:      "about 0 seconds",
+		24:     "about 2 minutes",
+		1200:   "about 100 minutes",
+		17280:  "about 24 hours",
+		200000: "about 12 days",
+	}
+	for ledgers, want := range tests {
+		assert.Equal(t, want, describeLedgers(ledgers), "ledgers: %d", ledgers)
+	}
+}
+
 // The renderers below are pure text shaping: every test feeds a hand-built
 // result and asserts on what appears on stdout. None touches a network, a
 // database, or the filesystem.

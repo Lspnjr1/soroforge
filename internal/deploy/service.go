@@ -595,7 +595,7 @@ func (s *Service) recordFailure(ctx context.Context, r resolved, action store.Ac
 func (s *Service) runTransaction(
 	ctx context.Context,
 	r resolved,
-	op *txnbuild.InvokeHostFunction,
+	op txnbuild.Operation,
 	step string,
 	dryRun bool,
 ) (txResult, error) {

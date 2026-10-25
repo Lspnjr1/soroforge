@@ -17,6 +17,7 @@ func newUpgradeCmd() *cobra.Command {
 		wasmHash       string
 		requireSpec    bool
 		progress       bool
+		extendTTL      bool
 		confirmTimeout time.Duration
 	)
 
@@ -79,6 +80,7 @@ refuses rather than hanging. --dry-run never prompts.`,
 				GitCommit:   gitCommit,
 				WasmHash:    wasmHash,
 				RequireSpec: requireSpec,
+				ExtendTTL:   extendTTL,
 				Actor:       "cli",
 			})
 			if err != nil {
@@ -90,6 +92,8 @@ refuses rather than hanging. --dry-run never prompts.`,
 
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"assemble and simulate without submitting or recording anything")
+	cmd.Flags().BoolVar(&extendTTL, "extend-ttl", false,
+		"after confirming, extend the upgraded contract's TTLs to the network's maximum")
 	cmd.Flags().BoolVar(&yes, "yes", false,
 		"skip the typed confirmation on protected networks (for CI)")
 	cmd.Flags().StringVar(&notes, "notes", "",
