@@ -120,6 +120,21 @@ func (m *jobManager) get(id string) (Job, bool) {
 	return *job, true
 }
 
+// count returns the number of retained jobs currently in state. Finished jobs
+// are intentionally excluded from the Prometheus gauges and expire as usual.
+func (m *jobManager) count(state string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	n := 0
+	for _, job := range m.jobs {
+		if job.State == state {
+			n++
+		}
+	}
+	return n
+}
+
 // run executes one job: wait for its alias's turn, then run with a detached
 // context.
 //

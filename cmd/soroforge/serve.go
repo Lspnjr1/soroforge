@@ -26,6 +26,7 @@ func newServeCmd() *cobra.Command {
 		addr    string
 		tlsCert string
 		tlsKey  string
+		metrics bool
 	)
 
 	cmd := &cobra.Command{
@@ -44,6 +45,7 @@ authentication and TLS in front of it.
 Endpoints:
   GET  /health   liveness, no auth
   GET  /ready    readiness (database and each network's RPC), no auth
+  GET  /metrics  Prometheus metrics (read token; opt in with --metrics)
   POST /v1/deploy            (?async=true for a job)
   POST /v1/upgrade           (?async=true for a job)
   GET  /v1/jobs/{id}
@@ -93,6 +95,13 @@ Endpoints:
 			if err != nil {
 				return err
 			}
+			metricsEnabled, err := a.cfg.Env.MetricsEnabled()
+			if err != nil {
+				return err
+			}
+			if cmd.Flags().Changed("metrics") {
+				metricsEnabled = metrics
+			}
 
 			handler, err := api.NewRouter(api.Options{
 				Service:   a.service,
@@ -103,8 +112,9 @@ Endpoints:
 					Burst:             rateLimit.Burst,
 					TrustProxyHeaders: rateLimit.TrustProxyHeaders,
 				},
-				CORSOrigins: corsOrigins,
-				Log:         slog.Default(),
+				CORSOrigins:    corsOrigins,
+				Log:            slog.Default(),
+				MetricsEnabled: metricsEnabled,
 			})
 			if err != nil {
 				return err
@@ -137,6 +147,8 @@ Endpoints:
 		"PEM certificate for TLS (default: $SOROFORGE_TLS_CERT); requires --tls-key")
 	cmd.Flags().StringVar(&tlsKey, "tls-key", "",
 		"PEM private key for TLS (default: $SOROFORGE_TLS_KEY); requires --tls-cert")
+	cmd.Flags().BoolVar(&metrics, "metrics", false,
+		"expose authenticated Prometheus metrics at /metrics")
 
 	return cmd
 }

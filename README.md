@@ -841,11 +841,19 @@ adjust `SOROFORGE_API_RATE_BURST`; rejected requests receive `429` and
 `SOROFORGE_API_TRUST_PROXY=true` opts into the first `X-Forwarded-For` address
 and must only be used when a trusted reverse proxy is the sole entry point.
 
+Prometheus metrics are off by default. Start the server with
+`soroforge serve --metrics` or set `SOROFORGE_API_METRICS=true` to expose
+`GET /metrics`. The endpoint requires a read-scoped bearer token. It reports request totals and
+latencies by matched route, deploy and upgrade outcomes, rate-limited requests,
+and queued/running asynchronous jobs. Route labels use route templates rather
+than IDs or raw paths.
+
 | Method | Path | Scope | Description |
 |---|---|---|---|
 | `GET` | `/health` | public | Liveness. Process up; dependencies not checked. |
 | `GET` | `/ready` | public | Readiness. `200` when the database answers and each configured network's RPC returns a latest ledger; `503` with the failing dependency names otherwise. Checks are cached briefly so probes cannot hammer the RPC. |
 | `GET` | `/openapi.json` | public | OpenAPI 3.1 API description. |
+| `GET` | `/metrics` | read | Prometheus metrics; registered only when metrics are enabled. |
 | `POST` | `/v1/deploy` | write | `{"alias","network","notes","dry_run","git_commit","require_spec"}` → `201` (`200` for a dry run). Add `?async=true` for a job. |
 | `POST` | `/v1/upgrade` | write | Same body → `200`. Add `?async=true` for a job. |
 | `GET` | `/v1/jobs/{id}` | read | Async job state and, when finished, its result. |
