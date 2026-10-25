@@ -90,6 +90,7 @@ func printDeployResult(r *deploy.DeployResult) error {
 	if r.Deployment != nil && r.Deployment.CIRunURL != "" {
 		fmt.Fprintf(w, "  CI run        %s\n", r.Deployment.CIRunURL)
 	}
+	printExtension(w, r.Alias, r.Extension, r.ExtensionError)
 	printCatalog(w, r.Catalog)
 	printWebhooks(w, r.Webhooks)
 
@@ -166,6 +167,7 @@ func printUpgradeResult(r *deploy.UpgradeResult) error {
 	if r.Deployment != nil && r.Deployment.CIRunURL != "" {
 		fmt.Fprintf(w, "  CI run        %s\n", r.Deployment.CIRunURL)
 	}
+	printExtension(w, r.Alias, r.Extension, r.ExtensionError)
 	printCatalog(w, r.Catalog)
 	printWebhooks(w, r.Webhooks)
 
@@ -346,6 +348,163 @@ func printInvokeResult(r *deploy.InvokeResult) error {
 	return nil
 }
 
+func printExtendResult(r *deploy.ExtendResult) error {
+	if flags.jsonOutput {
+		return printJSON(r)
+	}
+
+	w := out()
+	if r.DryRun {
+		fmt.Fprintf(w, "Dry run — nothing was submitted and nothing was recorded.\n\n")
+	} else {
+		fmt.Fprintf(w, "Extended %s's TTLs on %s.\n\n", r.Alias, r.Network)
+	}
+
+	fmt.Fprintf(w, "  Contract ID   %s\n", r.ContractID)
+	fmt.Fprintf(w, "  WASM hash     %s\n", r.WasmHash)
+	fmt.Fprintf(w, "  Entries       %s\n", strings.Join(r.Entries, ", "))
+	fmt.Fprintf(w, "  Extended      %d ledgers (%s)\n", r.ExtendedLedgers, describeLedgers(r.ExtendedLedgers))
+	if r.Capped {
+		fmt.Fprintf(w, "                capped from %d at the network's maximum of %d\n",
+			r.RequestedLedgers, r.MaxEntryTTL-1)
+	}
+	fmt.Fprintf(w, "  Deployer      %s\n", r.Deployer)
+	if r.MinResourceFee != 0 {
+		fmt.Fprintf(w, "  Resource fee  %d stroops\n", r.MinResourceFee)
+	}
+	if r.TxHash != "" {
+		fmt.Fprintf(w, "  Extend tx     %s\n", r.TxHash)
+	}
+	if r.Ledger != 0 {
+		fmt.Fprintf(w, "  Ledger        %d\n", r.Ledger)
+	}
+
+	if r.DryRun && r.EnvelopeXDR != "" {
+		fmt.Fprintf(w, "\nAssembled extend envelope (unsigned):\n\n  %s\n", r.EnvelopeXDR)
+		fmt.Fprintf(w, "\nRe-run without --dry-run to submit.\n")
+	}
+
+	return nil
+}
+
+func printRestoreResult(r *deploy.RestoreResult) error {
+	if flags.jsonOutput {
+		return printJSON(r)
+	}
+
+	w := out()
+	if r.NothingToRestore {
+		fmt.Fprintf(w, "Nothing to restore — %s's entries are already live on %s.\n\n", r.Alias, r.Network)
+		printRestoreFields(w, r)
+		return nil
+	}
+
+	if r.DryRun {
+		fmt.Fprintf(w, "Dry run — nothing was submitted and nothing was recorded.\n\n")
+	} else {
+		fmt.Fprintf(w, "Restored %s on %s.\n\n", r.Alias, r.Network)
+	}
+
+	printRestoreFields(w, r)
+
+	if r.DryRun && r.EnvelopeXDR != "" {
+		fmt.Fprintf(w, "\nAssembled restore envelope (unsigned):\n\n  %s\n", r.EnvelopeXDR)
+		fmt.Fprintf(w, "\nRe-run without --dry-run to submit.\n")
+	}
+
+	return nil
+}
+
+func printRestoreFields(w io.Writer, r *deploy.RestoreResult) {
+	fmt.Fprintf(w, "  Contract ID   %s\n", r.ContractID)
+	fmt.Fprintf(w, "  WASM hash     %s\n", r.WasmHash)
+	if len(r.Entries) > 0 {
+		fmt.Fprintf(w, "  Entries       %s\n", strings.Join(r.Entries, ", "))
+	}
+	fmt.Fprintf(w, "  Deployer      %s\n", r.Deployer)
+	if r.MinResourceFee != 0 {
+		fmt.Fprintf(w, "  Resource fee  %d stroops\n", r.MinResourceFee)
+	}
+	if r.TxHash != "" {
+		fmt.Fprintf(w, "  Restore tx    %s\n", r.TxHash)
+	}
+	if r.Ledger != 0 {
+		fmt.Fprintf(w, "  Ledger        %d\n", r.Ledger)
+	}
+}
+
+func printFundResult(r *deploy.FundResult) error {
+	if flags.jsonOutput {
+		return printJSON(r)
+	}
+
+	w := out()
+	if r.AlreadyFunded {
+		fmt.Fprintf(w, "%s already has its starting balance on %s; nothing to do.\n\n",
+			r.Address, r.Network)
+	} else {
+		fmt.Fprintf(w, "Funded %s on %s.\n\n", r.Address, r.Network)
+	}
+
+	fmt.Fprintf(w, "  Address       %s\n", r.Address)
+	fmt.Fprintf(w, "  Network       %s\n", r.Network)
+	fmt.Fprintf(w, "  Friendbot     %s\n", r.FriendbotURL)
+	if r.Hash != "" {
+		fmt.Fprintf(w, "  Funding tx    %s\n", r.Hash)
+	}
+	return nil
+}
+
+func printWhoAmIResult(r *deploy.WhoAmIResult) error {
+	if flags.jsonOutput {
+		return printJSON(r)
+	}
+
+	w := out()
+	fmt.Fprintf(w, "%s\n\n", r.Detail)
+
+	fmt.Fprintf(w, "  Address       %s\n", r.Address)
+	if r.KeySource != "" {
+		fmt.Fprintf(w, "  Key source    %s\n", r.KeySource)
+	}
+	fmt.Fprintf(w, "  Network       %s\n", r.Network)
+	if r.Funded {
+		fmt.Fprintf(w, "  Balance       %s XLM\n", r.BalanceXLM)
+		fmt.Fprintf(w, "  Sequence      %d\n", r.Sequence)
+	} else {
+		fmt.Fprintf(w, "  Funded        no (the account has no ledger entry yet)\n")
+		if r.FriendbotURL != "" {
+			fmt.Fprintf(w, "  Friendbot     %s\n", r.FriendbotURL)
+		}
+	}
+	return nil
+}
+
+func printExtension(w io.Writer, alias string, ext *deploy.ExtendResult, extErr string) {
+	switch {
+	case extErr != "":
+		fmt.Fprintf(w, "  TTL           not extended: %s\n", extErr)
+		fmt.Fprintf(w, "                (the contract is live; run `soroforge extend %s` to retry)\n", alias)
+	case ext != nil:
+		fmt.Fprintf(w, "  TTL           extended %d ledgers (tx %s)\n",
+			ext.ExtendedLedgers, shortHash(ext.TxHash))
+	}
+}
+
+func describeLedgers(ledgers uint32) string {
+	seconds := int64(ledgers) * 5
+	switch {
+	case seconds >= 48*3600:
+		return fmt.Sprintf("about %.0f days", float64(seconds)/(24*3600))
+	case seconds >= 2*3600:
+		return fmt.Sprintf("about %.0f hours", float64(seconds)/3600)
+	case seconds >= 120:
+		return fmt.Sprintf("about %.0f minutes", float64(seconds)/60)
+	default:
+		return fmt.Sprintf("about %d seconds", seconds)
+	}
+}
+
 // printWarnings reports non-fatal artifact problems found before upload. They
 // go to stdout with the result because they are part of it; --json carries the
 // same text in the result's warnings field.
@@ -476,7 +635,7 @@ func printHistory(alias, network string, deployments []store.Deployment) error {
 		}
 	}
 	tw := tabwriter.NewWriter(out(), 0, 0, 2, ' ', 0)
-	header := "WHEN\tACTION\tWASM HASH\tDEPLOYER\tLEDGER\tFEE (STROOPS)\tFEE (XLM)\tCOMMIT\tTX\tCI RUN"
+	header := "WHEN\tACTION\tACTOR\tWASM HASH\tDEPLOYER\tLEDGER\tFEE (STROOPS)\tFEE (XLM)\tCOMMIT\tTX\tCI RUN"
 	if hasExplorerLinks {
 		header += "\tCONTRACT URL\tTX URL"
 	}
@@ -498,6 +657,10 @@ func printHistory(alias, network string, deployments []store.Deployment) error {
 		if d.CIRunURL != "" {
 			ciRun = d.CIRunURL
 		}
+		actor := d.Actor
+		if actor == "" {
+			actor = "cli"
+		}
 		notes := d.Notes
 		if d.Action == store.ActionInvoke && d.FnName != "" {
 			inv := d.FnName
@@ -515,6 +678,7 @@ func printHistory(alias, network string, deployments []store.Deployment) error {
 		cols := []string{
 			formatTime(d.CreatedAt),
 			string(d.Action),
+			actor,
 			shortHash(d.WasmHash),
 			shortHash(d.DeployerPubkey),
 			formatLedger(d.Ledger),

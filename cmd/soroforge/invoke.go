@@ -49,6 +49,7 @@ Use --dry-run to simulate without submitting or recording anything.`,
 				Notes:     notes,
 				DryRun:    dryRun,
 				GitCommit: gitCommit,
+				Actor:     "cli",
 			})
 			if err != nil {
 				return err

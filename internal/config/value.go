@@ -140,8 +140,8 @@ func isDecimalInt(s string) bool {
 	return true
 }
 
-// decode unmarshals the captured node into out.
-func (v Value) decode(out any) error {
+// Decode unmarshals the captured node into out.
+func (v Value) Decode(out any) error {
 	if !v.set {
 		return fmt.Errorf("missing value")
 	}

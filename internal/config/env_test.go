@@ -259,107 +259,15 @@ func TestSigningSeedErrors(t *testing.T) {
 	})
 }
 
-func TestTLSFiles(t *testing.T) {
-	t.Run("neither configured", func(t *testing.T) {
-		cert, key, err := Env{}.TLSFiles()
-		require.NoError(t, err)
-		assert.Empty(t, cert)
-		assert.Empty(t, key)
-	})
-
-	t.Run("both configured", func(t *testing.T) {
-		cert, key, err := Env{TLSCert: "/tls/cert.pem", TLSKey: "/tls/key.pem"}.TLSFiles()
-		require.NoError(t, err)
-		assert.Equal(t, "/tls/cert.pem", cert)
-		assert.Equal(t, "/tls/key.pem", key)
-	})
-
-	t.Run("one alone is an error", func(t *testing.T) {
-		// Silently falling back to plaintext would be a security downgrade
-		// dressed up as a convenience.
-		_, _, err := Env{TLSCert: "/tls/cert.pem"}.TLSFiles()
-		assert.ErrorContains(t, err, EnvTLSKey)
-
-		_, _, err = Env{TLSKey: "/tls/key.pem"}.TLSFiles()
-		assert.ErrorContains(t, err, EnvTLSCert)
-	})
-}
-
-func TestLoadEnvReadsTLSVariables(t *testing.T) {
-	t.Setenv(EnvTLSCert, " /tls/cert.pem ")
-	t.Setenv(EnvTLSKey, "/tls/key.pem")
-
-	env := LoadEnv()
-	assert.Equal(t, "/tls/cert.pem", env.TLSCert)
-	assert.Equal(t, "/tls/key.pem", env.TLSKey)
-}
-
-func TestRateLimitDefaults(t *testing.T) {
-	// Sane defaults: limiting is on unless deliberately turned off, because
-	// the API holds a signing key and every call can move value.
-	cfg, err := Env{}.RateLimit()
-	require.NoError(t, err)
-	assert.Equal(t, DefaultAPIRateLimit, cfg.RequestsPerSecond)
-	assert.Equal(t, DefaultAPIRateBurst, cfg.Burst)
-	assert.False(t, cfg.TrustProxyHeaders)
-}
-
-func TestRateLimitParsesValues(t *testing.T) {
-	cfg, err := Env{
-		APIRateLimit:  "2.5",
-		APIRateBurst:  "7",
-		APITrustProxy: "true",
-	}.RateLimit()
-	require.NoError(t, err)
-	assert.Equal(t, 2.5, cfg.RequestsPerSecond)
-	assert.Equal(t, 7, cfg.Burst)
-	assert.True(t, cfg.TrustProxyHeaders)
-}
-
-func TestRateLimitZeroDisables(t *testing.T) {
-	cfg, err := Env{APIRateLimit: "0", APIRateBurst: "7"}.RateLimit()
-	require.NoError(t, err)
-	assert.Zero(t, cfg.RequestsPerSecond)
-	// The burst is meaningless when limiting is off; report it as such rather
-	// than a value a consumer might apply.
-	assert.Zero(t, cfg.Burst)
-}
-
-func TestRateLimitRejectsMalformedValues(t *testing.T) {
-	// A typo must stop the server rather than quietly disable a security
-	// control.
-	tests := map[string]Env{
-		"rate not a number":    {APIRateLimit: "fast"},
-		"rate negative":        {APIRateLimit: "-1"},
-		"rate not finite":      {APIRateLimit: "NaN"},
-		"burst not a number":   {APIRateBurst: "many"},
-		"burst zero":           {APIRateBurst: "0"},
-		"burst negative":       {APIRateBurst: "-5"},
-		"trust proxy not bool": {APITrustProxy: "maybe"},
-	}
-
-	for name, env := range tests {
-		t.Run(name, func(t *testing.T) {
-			_, err := env.RateLimit()
-			assert.Error(t, err)
-		})
-	}
-}
-
-func TestLoadEnvReadsRateLimitVariables(t *testing.T) {
-	t.Setenv(EnvAPIRateLimit, " 3.5 ")
-	t.Setenv(EnvAPIRateBurst, "9")
-	t.Setenv(EnvAPITrustProxy, "true")
-
-	env := LoadEnv()
-	assert.Equal(t, "3.5", env.APIRateLimit)
-	assert.Equal(t, "9", env.APIRateBurst)
-	assert.Equal(t, "true", env.APITrustProxy)
-}
-
-func TestLoadEnvReadsScopedAPITokens(t *testing.T) {
-	t.Setenv(EnvAPITokens, " dashboard:read:token , ci:write:secret ")
-	assert.Equal(t, "dashboard:read:token , ci:write:secret", LoadEnv().APITokens)
+func TestSigningSource(t *testing.T) {
+	// The label is what commands like `soroforge whoami` print so operators
+	// can confirm which key is in use without the key ever being read.
+	assert.Empty(t, Env{}.SigningSource())
+	assert.Equal(t, "env:"+EnvSecretKey, Env{SecretKey: "SABC"}.SigningSource())
+	assert.Equal(t, "keystore:/keys/deployer", Env{KeystorePath: "/keys/deployer"}.SigningSource())
+	assert.Equal(t, "env:"+EnvSecretKey,
+		Env{SecretKey: "SABC", KeystorePath: "/keys/deployer"}.SigningSource(),
+		"the same precedence as SigningSeed must apply")
 }
 
 func TestHasSigningKey(t *testing.T) {

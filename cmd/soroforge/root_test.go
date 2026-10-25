@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/soroworks/soroforge/internal/config"
+	"github.com/spf13/cobra"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -109,6 +110,21 @@ func TestSetupLoggingUnknownLevelRejected(t *testing.T) {
 
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "debug")
+}
+
+func TestRootRegistersLifecycleCommands(t *testing.T) {
+	root := newRootCmd()
+	for _, name := range []string{"extend", "restore", "fund", "whoami"} {
+		_, _, err := root.Find([]string{name})
+		require.NoError(t, err)
+	}
+
+	for name, cmd := range map[string]*cobra.Command{
+		"deploy":  newDeployCmd(),
+		"upgrade": newUpgradeCmd(),
+	} {
+		assert.NotNil(t, cmd.Flags().Lookup("extend-ttl"), "%s must expose --extend-ttl", name)
+	}
 }
 
 func TestBuildSignerUsesTheExternalCommand(t *testing.T) {

@@ -21,6 +21,14 @@ type UpgradeRequest struct {
 	GitCommit   string `json:"git_commit,omitempty"`
 	WasmHash    string `json:"wasm_hash,omitempty"`
 	RequireSpec bool   `json:"require_spec,omitempty"`
+	// ExtendTTL renews the upgraded contract's instance and code TTLs to the
+	// network's maximum after the upgrade confirms. Ignored on a dry run.
+	ExtendTTL bool `json:"extend_ttl,omitempty"`
+
+	// Actor is the identity that triggered the upgrade. For CLI this is
+	// "cli"; for API it is the token name. It is recorded in the deployment
+	// history for audit purposes.
+	Actor string `json:"-"`
 }
 
 // UpgradeResult describes a completed or simulated upgrade.
@@ -71,6 +79,15 @@ type UpgradeResult struct {
 	// network's sorovault_url. Absent on a dry run, on a no-change upgrade,
 	// or when no registry is configured.
 	Catalog *CatalogStatus `json:"catalog,omitempty"`
+
+	// Extension reports the TTL extension --extend-ttl requested. Absent
+	// unless the extension succeeded.
+	Extension *ExtendResult `json:"extension,omitempty"`
+
+	// ExtensionError is set when --extend-ttl was requested but the extension
+	// failed after the upgrade was confirmed and recorded. The contract is
+	// upgraded; retry the extension with `soroforge extend`.
+	ExtensionError string `json:"extension_error,omitempty"`
 
 	// Webhooks reports the outcome of delivering notifications to configured
 	// webhook endpoints. Absent on a dry run, on a no-change upgrade, or when
@@ -133,6 +150,9 @@ func (s *Service) resolveUpgradeHash(ctx context.Context, r resolved, input stri
 // The entrypoint name defaults to "upgrade" and is configurable per contract
 // via `upgrade_fn`.
 func (s *Service) Upgrade(ctx context.Context, req UpgradeRequest) (_ *UpgradeResult, err error) {
+	if req.Actor == "" {
+		req.Actor = "cli"
+	}
 	r, err := s.resolve(req.Network, req.Alias)
 	if err != nil {
 		return nil, err
@@ -162,13 +182,8 @@ func (s *Service) Upgrade(ctx context.Context, req UpgradeRequest) (_ *UpgradeRe
 	// Upgrading requires knowing which contract to upgrade, and that is exactly
 	// what the tracked history is for. An untracked contract is a deploy, not
 	// an upgrade.
-	tracked, err := s.store.GetContract(ctx, r.NetworkName, r.Alias)
+	tracked, err := s.trackedContract(ctx, r)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, fmt.Errorf(
-				"contract %s is not tracked on %s; deploy it first with `soroforge deploy %s`",
-				r.Alias, r.NetworkName, r.Alias)
-		}
 		return nil, err
 	}
 
@@ -239,6 +254,13 @@ func (s *Service) Upgrade(ctx context.Context, req UpgradeRequest) (_ *UpgradeRe
 	// answer to "is this a no-op?" comes from the chain.
 	liveHash, err := stellar.OnChainWasmHash(ctx, r.Client, tracked.ContractID)
 	if err != nil {
+		var archived *stellar.ErrContractArchived
+		if errors.As(err, &archived) {
+			return nil, fmt.Errorf(
+				"contract %s is archived on %s and cannot be upgraded until it is restored; "+
+					"run `soroforge restore %s` first",
+				tracked.ContractID, r.NetworkName, r.Alias)
+		}
 		var sacErr *stellar.ErrStellarAssetContract
 		if errors.As(err, &sacErr) {
 			return nil, fmt.Errorf("cannot upgrade %s: contract is a Stellar Asset Contract", r.Alias)
@@ -348,6 +370,7 @@ func (s *Service) Upgrade(ctx context.Context, req UpgradeRequest) (_ *UpgradeRe
 		WasmHash:       wasmHashHex,
 		Action:         store.ActionUpgrade,
 		DeployerPubkey: signer.Address(),
+		Actor:          req.Actor,
 		TxHash:         upgrade.Hash,
 		Ledger:         upgrade.Ledger,
 		Notes:          req.Notes,
@@ -360,6 +383,11 @@ func (s *Service) Upgrade(ctx context.Context, req UpgradeRequest) (_ *UpgradeRe
 		return nil, err
 	}
 	result.Deployment = deployment
+
+	if req.ExtendTTL && !req.DryRun {
+		result.Extension, result.ExtensionError = s.extendAfterChange(ctx, r, signer, tracked, req.Actor, log)
+	}
+
 	result.Catalog = s.publish(ctx, r, tracked.ContractID, log)
 	result.Webhooks = s.notifyWebhooks(ctx, r.Network, WebhookPayload{
 		Alias:          r.Alias,

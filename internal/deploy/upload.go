@@ -16,6 +16,11 @@ type UploadRequest struct {
 	Network string `json:"network,omitempty"`
 	Notes   string `json:"notes,omitempty"`
 	DryRun  bool   `json:"dry_run,omitempty"`
+
+	// Actor is the identity that triggered the upload. For CLI this is
+	// "cli"; for API it is the token name. It is recorded in the deployment
+	// history for audit purposes.
+	Actor string `json:"-"`
 }
 
 // UploadResult describes a completed or simulated upload.
@@ -57,6 +62,9 @@ type UploadResult struct {
 // ledger entry is keyed by the hash — so this leaves no contract behind and
 // changes nothing that already exists.
 func (s *Service) Upload(ctx context.Context, req UploadRequest) (*UploadResult, error) {
+	if req.Actor == "" {
+		req.Actor = "cli"
+	}
 	r, err := s.resolve(req.Network, req.Alias)
 	if err != nil {
 		return nil, err
@@ -117,6 +125,7 @@ func (s *Service) Upload(ctx context.Context, req UploadRequest) (*UploadResult,
 		WasmHash:       wasmHashHex,
 		Action:         store.ActionUpload,
 		DeployerPubkey: signer.Address(),
+		Actor:          req.Actor,
 		TxHash:         upload.Hash,
 		Ledger:         upload.Ledger,
 		Notes:          req.Notes,

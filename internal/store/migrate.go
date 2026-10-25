@@ -86,6 +86,12 @@ func (m *Migrator) Up() error {
 // `migrate down` on a database holding real deployment history should not be a
 // single command away from dropping all of it.
 func (m *Migrator) Down() error {
+	// Stepping back from an empty schema is a no-op. golang-migrate's
+	// Steps(-1) reports os.ErrNotExist rather than ErrNoChange when no
+	// version has ever been applied, so check for the nil version first.
+	if _, _, err := m.m.Version(); errors.Is(err, migrate.ErrNilVersion) {
+		return nil
+	}
 	if err := m.m.Steps(-1); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("migrate down: %w", err)
 	}

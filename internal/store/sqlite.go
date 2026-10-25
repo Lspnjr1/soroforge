@@ -132,13 +132,13 @@ func parseSQLiteTime(raw string) (time.Time, error) {
 }
 
 const sqliteUpsertContract = `
-INSERT INTO contracts (alias, network, contract_id, current_wasm_hash, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO contracts (alias, network, contract_id, current_wasm_hash, created_at, updated_at, untracked_at)
+VALUES (?, ?, ?, ?, ?, ?, NULL)
 ON CONFLICT (network, alias) DO UPDATE
 SET contract_id       = excluded.contract_id,
     current_wasm_hash = excluded.current_wasm_hash,
     updated_at        = excluded.updated_at
-RETURNING id, alias, network, contract_id, current_wasm_hash, created_at, updated_at`
+RETURNING id, alias, network, contract_id, current_wasm_hash, created_at, updated_at, untracked_at`
 
 // UpsertContract implements Store.
 func (s *SQLite) UpsertContract(ctx context.Context, c Contract) (Contract, error) {
@@ -156,7 +156,7 @@ func (s *SQLite) UpsertContract(ctx context.Context, c Contract) (Contract, erro
 }
 
 const sqliteGetContract = `
-SELECT id, alias, network, contract_id, current_wasm_hash, created_at, updated_at
+SELECT id, alias, network, contract_id, current_wasm_hash, created_at, updated_at, untracked_at
 FROM contracts
 WHERE network = ? AND alias = ?`
 
@@ -174,9 +174,9 @@ func (s *SQLite) GetContract(ctx context.Context, network, alias string) (Contra
 }
 
 const sqliteListContracts = `
-SELECT id, alias, network, contract_id, current_wasm_hash, created_at, updated_at
+SELECT id, alias, network, contract_id, current_wasm_hash, created_at, updated_at, untracked_at
 FROM contracts
-WHERE (? = '' OR network = ?)
+WHERE (? = '' OR network = ?) AND untracked_at IS NULL
 ORDER BY network, alias`
 
 // ListContracts implements Store.
@@ -229,13 +229,13 @@ func (s *SQLite) ListContractsPage(ctx context.Context, network string, limit, o
 
 const sqliteRecordDeployment = `
 INSERT INTO deployments (
-    alias, network, contract_id, wasm_hash, action, deployer_pubkey,
+    alias, network, contract_id, wasm_hash, action, deployer_pubkey, actor,
     tx_hash, ledger, git_commit, dirty, fee_charged, notes,
     ci_run_url, fn_name, fn_args, constructor_args, created_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id, alias, network, contract_id, wasm_hash, action,
-          deployer_pubkey, tx_hash, ledger, git_commit, dirty, fee_charged,
+          deployer_pubkey, actor, tx_hash, ledger, git_commit, dirty, fee_charged,
           notes, ci_run_url, fn_name, fn_args, constructor_args, created_at`
 
 // RecordDeployment implements Store.
@@ -243,9 +243,13 @@ func (s *SQLite) RecordDeployment(ctx context.Context, d Deployment) (Deployment
 	if err := d.Validate(); err != nil {
 		return Deployment{}, err
 	}
+	actor := d.Actor
+	if actor == "" {
+		actor = "cli"
+	}
 	row := s.db.QueryRowContext(ctx, sqliteRecordDeployment,
 		d.Alias, d.Network, d.ContractID, d.WasmHash, string(d.Action),
-		d.DeployerPubkey, nullableString(d.TxHash), nullableInt64(int64(d.Ledger)),
+		d.DeployerPubkey, actor, nullableString(d.TxHash), nullableInt64(int64(d.Ledger)),
 		nullableString(d.GitCommit), nullableDirty(d), nullableFee(d.FeeCharged), nullableString(d.Notes),
 		nullableString(d.CIRunURL), nullableString(d.FnName), nullableString(d.FnArgs), nullableString(d.ConstructorArgs),
 		formatSQLiteTime(time.Now().UTC()))
@@ -259,7 +263,7 @@ func (s *SQLite) RecordDeployment(ctx context.Context, d Deployment) (Deployment
 
 const sqliteHistory = `
 SELECT id, alias, network, contract_id, wasm_hash, action,
-       deployer_pubkey, tx_hash, ledger, git_commit, dirty, fee_charged,
+       deployer_pubkey, actor, tx_hash, ledger, git_commit, dirty, fee_charged,
        notes, ci_run_url, fn_name, fn_args, constructor_args, created_at
 FROM deployments
 WHERE network = ? AND alias = ?
@@ -267,7 +271,7 @@ ORDER BY created_at DESC, id DESC`
 
 const sqliteGetDeployment = `
 SELECT id, alias, network, contract_id, wasm_hash, action,
-       deployer_pubkey, tx_hash, ledger, git_commit, dirty, fee_charged,
+       deployer_pubkey, actor, tx_hash, ledger, git_commit, dirty, fee_charged,
        notes, ci_run_url, fn_name, fn_args, constructor_args, created_at
 FROM deployments
 WHERE id = ?`
@@ -335,7 +339,7 @@ func (s *SQLite) HistoryPage(ctx context.Context, network, alias string, limit, 
 
 const sqliteListAllDeployments = `
 SELECT id, alias, network, contract_id, wasm_hash, action,
-       deployer_pubkey, tx_hash, ledger, git_commit, dirty, fee_charged,
+       deployer_pubkey, actor, tx_hash, ledger, git_commit, dirty, fee_charged,
        notes, ci_run_url, fn_name, fn_args, constructor_args, created_at
 FROM deployments
 ORDER BY id`
@@ -415,6 +419,29 @@ func (s *SQLite) Attempts(ctx context.Context, network, alias string) ([]Attempt
 	return out, nil
 }
 
+// CountAttemptsBefore implements Store.
+func (s *SQLite) CountAttemptsBefore(ctx context.Context, before time.Time) (int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM deployment_attempts WHERE created_at < ?`, formatSQLiteTime(before)).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count old attempts: %w", err)
+	}
+	return count, nil
+}
+
+// PruneAttempts implements Store. Confirmed deployment rows are stored
+// separately and remain untouched.
+func (s *SQLite) PruneAttempts(ctx context.Context, before time.Time) (int, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM deployment_attempts WHERE created_at < ?`, formatSQLiteTime(before))
+	if err != nil {
+		return 0, fmt.Errorf("prune old attempts: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("prune old attempts: read affected row count: %w", err)
+	}
+	return int(count), nil
+}
+
 // scanSQLite* mirror their pgx counterparts but read timestamps as text,
 // which is how SQLite stores them.
 
@@ -426,8 +453,9 @@ func scanSQLiteContract(s rowScanner) (Contract, error) {
 	var (
 		c                Contract
 		createdAt, updAt string
+		untrackedAt      sql.NullString
 	)
-	if err := s.Scan(&c.ID, &c.Alias, &c.Network, &c.ContractID, &c.CurrentWasmHash, &createdAt, &updAt); err != nil {
+	if err := s.Scan(&c.ID, &c.Alias, &c.Network, &c.ContractID, &c.CurrentWasmHash, &createdAt, &updAt, &untrackedAt); err != nil {
 		return Contract{}, err
 	}
 	var err error
@@ -436,6 +464,11 @@ func scanSQLiteContract(s rowScanner) (Contract, error) {
 	}
 	if c.UpdatedAt, err = parseSQLiteTime(updAt); err != nil {
 		return Contract{}, err
+	}
+	if untrackedAt.Valid {
+		if t, err := parseSQLiteTime(untrackedAt.String); err == nil {
+			c.UntrackedAt = &t
+		}
 	}
 	return c, nil
 }
@@ -454,9 +487,10 @@ func scanSQLiteDeployment(s rowScanner) (Deployment, error) {
 		fnName        sql.NullString
 		fnArgs        sql.NullString
 		ctorArgs      sql.NullString
+		actor         sql.NullString
 	)
 	if err := s.Scan(&d.ID, &d.Alias, &d.Network, &d.ContractID, &d.WasmHash, &action,
-		&d.DeployerPubkey, &txHash, &ledger, &gitCommit, &dirty, &fee,
+		&d.DeployerPubkey, &actor, &txHash, &ledger, &gitCommit, &dirty, &fee,
 		&notes, &ciRunURL, &fnName, &fnArgs, &ctorArgs, &createdAt); err != nil {
 		return Deployment{}, err
 	}
@@ -479,6 +513,9 @@ func scanSQLiteDeployment(s rowScanner) (Deployment, error) {
 	}
 	if notes.Valid {
 		d.Notes = notes.String
+	}
+	if actor.Valid {
+		d.Actor = actor.String
 	}
 	var err error
 	if d.CreatedAt, err = parseSQLiteTime(createdAt); err != nil {
@@ -566,22 +603,85 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`,
 	}
 
 	for _, d := range deployments {
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO deployments (id, alias, network, contract_id, wasm_hash, action,
-                         deployer_pubkey, tx_hash, ledger, git_commit, dirty, fee_charged,
-                         notes, ci_run_url, fn_name, fn_args, constructor_args, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		actor := d.Actor
+		if actor == "" {
+			actor = "cli"
+		}
+		vals := []any{
 			d.ID, d.Alias, d.Network, d.ContractID, d.WasmHash, string(d.Action),
-			d.DeployerPubkey, nullableString(d.TxHash), nullableInt64(int64(d.Ledger)),
+			d.DeployerPubkey, actor, nullableString(d.TxHash), nullableInt64(int64(d.Ledger)),
 			nullableString(d.GitCommit), nullableDirty(d), nullableFee(d.FeeCharged), nullableString(d.Notes),
 			nullableString(d.CIRunURL), nullableString(d.FnName), nullableString(d.FnArgs), nullableString(d.ConstructorArgs),
-			formatSQLiteTime(d.CreatedAt)); err != nil {
+			formatSQLiteTime(d.CreatedAt),
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO deployments (id, alias, network, contract_id, wasm_hash, action,
+                         deployer_pubkey, actor, tx_hash, ledger, git_commit, dirty, fee_charged,
+                         notes, ci_run_url, fn_name, fn_args, constructor_args, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			vals...); err != nil {
 			return fmt.Errorf("sqlite import deployment %d: %w", d.ID, err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("sqlite import: commit: %w", err)
+	}
+	return nil
+}
+
+// RenameContract renames a tracked contract's alias and all its history atomically.
+func (s *SQLite) RenameContract(ctx context.Context, network, oldAlias, newAlias string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("rename contract: begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Check if new alias already exists.
+	var exists int
+	err = tx.QueryRowContext(ctx, `SELECT 1 FROM contracts WHERE network = ? AND alias = ?`, network, newAlias).Scan(&exists)
+	if err != sql.ErrNoRows {
+		if err != nil {
+			return fmt.Errorf("rename contract: check new alias exists: %w", err)
+		}
+		return fmt.Errorf("rename contract: alias %q already exists on %s", newAlias, network)
+	}
+
+	// Update contracts table.
+	result, err := tx.ExecContext(ctx, `UPDATE contracts SET alias = ?, updated_at = ? WHERE network = ? AND alias = ?`, newAlias, formatSQLiteTime(time.Now().UTC()), network, oldAlias)
+	if err != nil {
+		return fmt.Errorf("rename contract: update contracts: %w", err)
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("rename contract: %w", ErrNotFound)
+	}
+
+	// Update deployments table.
+	_, err = tx.ExecContext(ctx, `UPDATE deployments SET alias = ? WHERE network = ? AND alias = ?`, newAlias, network, oldAlias)
+	if err != nil {
+		return fmt.Errorf("rename contract: update deployments: %w", err)
+	}
+
+	// Update deployment_attempts table.
+	_, err = tx.ExecContext(ctx, `UPDATE deployment_attempts SET alias = ? WHERE network = ? AND alias = ?`, newAlias, network, oldAlias)
+	if err != nil {
+		return fmt.Errorf("rename contract: update deployment_attempts: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// UntrackContract stops tracking a contract while keeping its history readable.
+func (s *SQLite) UntrackContract(ctx context.Context, network, alias string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE contracts SET untracked_at = ? WHERE network = ? AND alias = ?`, formatSQLiteTime(time.Now().UTC()), network, alias)
+	if err != nil {
+		return fmt.Errorf("untrack contract: %w", err)
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("untrack contract: %w", ErrNotFound)
 	}
 	return nil
 }

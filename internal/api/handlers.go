@@ -53,6 +53,11 @@ func (h *handlers) deploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get the token name from the request context for audit trail.
+	if info := requestInfoFrom(r.Context()); info != nil && info.tokenName != "" {
+		req.Actor = info.tokenName
+	}
+
 	async, err := asyncRequested(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -96,6 +101,11 @@ func (h *handlers) upgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get the token name from the request context for audit trail.
+	if info := requestInfoFrom(r.Context()); info != nil && info.tokenName != "" {
+		req.Actor = info.tokenName
+	}
+
 	async, err := asyncRequested(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -119,6 +129,52 @@ func (h *handlers) upgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// track handles POST /v1/track.
+func (h *handlers) track(w http.ResponseWriter, r *http.Request) {
+	var req deploy.TrackRequest
+	if err := decodeBody(w, r, &req); err != nil {
+		writeDecodeError(w, err)
+		return
+	}
+	if req.Alias == "" {
+		writeError(w, http.StatusBadRequest, "alias is required")
+		return
+	}
+	if req.ContractID == "" {
+		writeError(w, http.StatusBadRequest, "contract_id is required")
+		return
+	}
+
+	// Get the token name from the request context for audit trail.
+	if info := requestInfoFrom(r.Context()); info != nil && info.tokenName != "" {
+		req.Actor = info.tokenName
+	}
+
+	async, err := asyncRequested(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if async {
+		h.submitJob(w, jobSpec{
+			alias:   req.Alias,
+			network: req.Network,
+			run: func(ctx context.Context) (any, error) {
+				return h.svc.Track(ctx, req)
+			},
+		})
+		return
+	}
+
+	result, err := h.svc.Track(r.Context(), req)
+	if err != nil {
+		h.log.Error("track failed", "alias", req.Alias, "network", req.Network, "error", err)
+		writeError(w, statusForError(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, result)
 }
 
 // asyncRequested reports whether the caller asked for a background job via

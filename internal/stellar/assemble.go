@@ -17,8 +17,10 @@ type BuildParams struct {
 	// Source is the account paying the fee and supplying the sequence number.
 	Source txnbuild.Account
 
-	// Operation is the host function invocation to run.
-	Operation *txnbuild.InvokeHostFunction
+	// Operation is the Soroban operation to run: an InvokeHostFunction, an
+	// ExtendFootprintTtl, or a RestoreFootprint. All three carry their
+	// footprint through the transaction's Soroban data.
+	Operation txnbuild.Operation
 
 	// BaseFee is the per-operation fee in stroops. The resource fee determined
 	// by simulation is added on top of it during assembly.
@@ -92,7 +94,7 @@ func Assemble(tx *txnbuild.Transaction, sim SimulateResult) (*txnbuild.Transacti
 		// succeed, so this stops with an explanation instead.
 		return nil, fmt.Errorf(
 			"simulation reports archived ledger entries that must be restored first; " +
-				"run a RestoreFootprint transaction (e.g. `stellar contract restore`) and retry")
+				"run `soroforge restore <alias>` and retry")
 	}
 	if sim.TransactionDataXDR == "" {
 		return nil, fmt.Errorf("simulation returned no transaction data; cannot determine the footprint")
@@ -107,24 +109,40 @@ func Assemble(tx *txnbuild.Transaction, sim SimulateResult) (*txnbuild.Transacti
 	if len(ops) != 1 {
 		return nil, fmt.Errorf("assemble: expected exactly 1 operation, got %d", len(ops))
 	}
-	invoke, ok := ops[0].(*txnbuild.InvokeHostFunction)
-	if !ok {
-		return nil, fmt.Errorf("assemble: expected an InvokeHostFunction operation, got %T", ops[0])
-	}
 
-	auth, err := decodeAuth(sim)
-	if err != nil {
-		return nil, err
-	}
+	ext := xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
 
-	assembled := &txnbuild.InvokeHostFunction{
-		HostFunction:  invoke.HostFunction,
-		Auth:          auth,
-		SourceAccount: invoke.SourceAccount,
-		Ext: xdr.TransactionExt{
-			V:           1,
-			SorobanData: &sorobanData,
-		},
+	var assembled txnbuild.Operation
+	switch op := ops[0].(type) {
+	case *txnbuild.InvokeHostFunction:
+		// Authorization entries are recorded during simulation and must be
+		// attached before submission; extend and restore operations need none.
+		auth, err := decodeAuth(sim)
+		if err != nil {
+			return nil, err
+		}
+		assembled = &txnbuild.InvokeHostFunction{
+			HostFunction:  op.HostFunction,
+			Auth:          auth,
+			SourceAccount: op.SourceAccount,
+			Ext:           ext,
+		}
+
+	case *txnbuild.ExtendFootprintTtl:
+		assembled = &txnbuild.ExtendFootprintTtl{
+			ExtendTo:      op.ExtendTo,
+			SourceAccount: op.SourceAccount,
+			Ext:           ext,
+		}
+
+	case *txnbuild.RestoreFootprint:
+		assembled = &txnbuild.RestoreFootprint{
+			SourceAccount: op.SourceAccount,
+			Ext:           ext,
+		}
+
+	default:
+		return nil, fmt.Errorf("assemble: unsupported operation type %T", ops[0])
 	}
 
 	source := tx.SourceAccount()

@@ -20,6 +20,11 @@ type InvokeRequest struct {
 	Notes     string   `json:"notes,omitempty"`
 	DryRun    bool     `json:"dry_run,omitempty"`
 	GitCommit string   `json:"git_commit,omitempty"`
+
+	// Actor is the identity that triggered the invocation. For CLI this is
+	// "cli"; for API it is the token name. It is recorded in the deployment
+	// history for audit purposes.
+	Actor string `json:"-"`
 }
 
 // InvokeResult describes a completed or simulated invocation.
@@ -40,6 +45,9 @@ type InvokeResult struct {
 // Invoke executes an administrative or general function call on a deployed,
 // tracked contract using the deployer key.
 func (s *Service) Invoke(ctx context.Context, req InvokeRequest) (*InvokeResult, error) {
+	if req.Actor == "" {
+		req.Actor = "cli"
+	}
 	if strings.TrimSpace(req.Function) == "" {
 		return nil, fmt.Errorf("invoke: function name is required")
 	}
@@ -124,6 +132,7 @@ func (s *Service) Invoke(ctx context.Context, req InvokeRequest) (*InvokeResult,
 		WasmHash:       tracked.CurrentWasmHash,
 		Action:         store.ActionInvoke,
 		DeployerPubkey: signer.Address(),
+		Actor:          req.Actor,
 		TxHash:         txRes.Hash,
 		Ledger:         txRes.Ledger,
 		Notes:          req.Notes,

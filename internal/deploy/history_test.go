@@ -34,6 +34,7 @@ func TestHistoryEmptyNetworkUsesDefault(t *testing.T) {
 		WasmHash:       "v1",
 		Action:         store.ActionDeploy,
 		DeployerPubkey: "GABC",
+		Actor:          "cli",
 	})
 	require.NoError(t, err)
 
