@@ -77,6 +77,18 @@ func (f *fakeService) Upgrade(_ context.Context, req deploy.UpgradeRequest) (*de
 	return f.upgradeResult, nil
 }
 
+func (f *fakeService) Track(_ context.Context, req deploy.TrackRequest) (*deploy.TrackResult, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &deploy.TrackResult{
+		Alias:      req.Alias,
+		Network:    req.Network,
+		ContractID: req.ContractID,
+	}, nil
+}
+
 func (f *fakeService) Status(_ context.Context, req deploy.StatusRequest) (*deploy.StatusResult, error) {
 	f.lastStatus = req
 	if f.err != nil {

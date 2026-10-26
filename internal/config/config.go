@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -77,6 +79,12 @@ type Network struct {
 	// Passphrase is the network passphrase, e.g. "Test SDF Network ; September 2015".
 	Passphrase string `yaml:"passphrase"`
 
+	// FriendbotURL, when set, is the network's Friendbot endpoint, used by
+	// `soroforge fund` to top up the deployer's account. Test networks have
+	// one; mainnet does not, and its absence is what makes `fund` refuse to
+	// run there. Optional.
+	FriendbotURL string `yaml:"friendbot_url"`
+
 	// SoroVaultURL, when set, is a SoroVault registry serving this network.
 	// Every confirmed deploy and upgrade is registered there, so the
 	// contract's interface is discoverable as soon as it is live. Optional.
@@ -98,6 +106,45 @@ type Network struct {
 	// Webhooks lists endpoints notified after each confirmed deploy or upgrade.
 	// Optional.
 	Webhooks []Webhook `yaml:"webhooks"`
+
+	// rawRPCURL and rawSoroVaultURL hold rpc_url and sorovault_url as written
+	// in the file, before ${NAME} expansion, when they contained a reference.
+	// RPCURL and SoroVaultURL hold the expanded values used to connect; these
+	// are what anything that prints the config shows instead, so a key kept in
+	// the environment cannot leak into logs or --json output.
+	rawRPCURL       string
+	rawSoroVaultURL string
+}
+
+// DisplayRPCURL returns rpc_url as written in soroforge.yaml, with any
+// ${NAME} reference left unexpanded. Use it wherever the URL is printed.
+func (n Network) DisplayRPCURL() string {
+	if n.rawRPCURL != "" {
+		return n.rawRPCURL
+	}
+	return n.RPCURL
+}
+
+// DisplaySoroVaultURL is DisplayRPCURL for sorovault_url.
+func (n Network) DisplaySoroVaultURL() string {
+	if n.rawSoroVaultURL != "" {
+		return n.rawSoroVaultURL
+	}
+	return n.SoroVaultURL
+}
+
+// RedactURLs replaces any expanded rpc_url or sorovault_url in s with its
+// unexpanded ${NAME} form. Errors from HTTP clients quote the URL they
+// failed on; passing their text through here keeps an environment-held key
+// out of the message.
+func (n Network) RedactURLs(s string) string {
+	if n.rawRPCURL != "" && n.RPCURL != "" {
+		s = strings.ReplaceAll(s, n.RPCURL, n.rawRPCURL)
+	}
+	if n.rawSoroVaultURL != "" && n.SoroVaultURL != "" {
+		s = strings.ReplaceAll(s, n.SoroVaultURL, n.rawSoroVaultURL)
+	}
+	return s
 }
 
 // Webhook configures a notification target for confirmed contract events.
@@ -256,10 +303,82 @@ func Load(path string) (*Config, error) {
 	cfg.path = resolved
 	cfg.Env = LoadEnv()
 
+	// Expansion runs before Validate, so a variable holding a malformed URL
+	// is still caught; Validate reports it in the unexpanded form.
+	if err := cfg.expandNetworkURLs(); err != nil {
+		return nil, fmt.Errorf("invalid config %s: %w", resolved, err)
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config %s: %w", resolved, err)
 	}
 	return cfg, nil
+}
+
+// envRef matches a ${NAME} environment reference. Only the braced form is
+// recognised: a bare $NAME is ambiguous inside a URL, so it is left as written.
+var envRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
+// expandNetworkURLs substitutes ${NAME} references in every network's rpc_url
+// and sorovault_url, keeping the written form for display.
+//
+// Expansion is deliberately limited to those two fields. They are where
+// provider API keys live, and both are only ever used to open a connection.
+// The passphrase is mixed into every signature and must be reviewable as
+// written; contract fields and constructor args are recorded in the
+// deployment history, where an expanded value would be stored. A literal $
+// in any of those stays literal.
+func (c *Config) expandNetworkURLs() error {
+	names := make([]string, 0, len(c.Networks))
+	for name := range c.Networks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var problems []string
+	for _, name := range names {
+		n := c.Networks[name]
+		if v, ok, err := expandEnvRefs(n.RPCURL); err != nil {
+			problems = append(problems, fmt.Sprintf("networks.%s.rpc_url: %v", name, err))
+		} else if ok {
+			n.rawRPCURL, n.RPCURL = n.RPCURL, v
+		}
+		if v, ok, err := expandEnvRefs(n.SoroVaultURL); err != nil {
+			problems = append(problems, fmt.Sprintf("networks.%s.sorovault_url: %v", name, err))
+		} else if ok {
+			n.rawSoroVaultURL, n.SoroVaultURL = n.SoroVaultURL, v
+		}
+		c.Networks[name] = n
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("%s", strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+// expandEnvRefs replaces each ${NAME} in s with the variable's value. ok
+// reports whether s contained a reference at all. A variable that is unset or
+// empty is an error naming it, never an empty substitution: a URL with a hole
+// in it would fail later as a confusing connection error instead.
+func expandEnvRefs(s string) (expanded string, ok bool, err error) {
+	if !envRef.MatchString(s) {
+		return s, false, nil
+	}
+	var missing []string
+	expanded = envRef.ReplaceAllStringFunc(s, func(ref string) string {
+		name := envRef.FindStringSubmatch(ref)[1]
+		v, set := os.LookupEnv(name)
+		if !set || v == "" {
+			missing = append(missing, "${"+name+"}")
+			return ref
+		}
+		return v
+	})
+	if len(missing) > 0 {
+		return "", true, fmt.Errorf("references %s, which is not set in the environment",
+			strings.Join(missing, ", "))
+	}
+	return expanded, true, nil
 }
 
 // parse decodes YAML into a Config without touching the filesystem or

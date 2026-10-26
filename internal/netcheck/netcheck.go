@@ -118,7 +118,7 @@ func Check(ctx context.Context, networks map[string]config.Network, clients Clie
 // otherwise print the very userinfo and query-string credentials the report
 // exists to hide — including in the --json payload.
 func checkOne(ctx context.Context, name string, network config.Network, clients ClientFactory, timeout time.Duration) Result {
-	res := Result{Network: name, RedactedURL: RedactURL(network.RPCURL)}
+	res := Result{Network: name, RedactedURL: RedactURL(network.DisplayRPCURL())}
 	fail := func(msg string) Result {
 		res.Error = redactURLsIn(msg)
 		return res

@@ -51,7 +51,7 @@ func DefaultClientFactory(_ string, network config.Network) (stellar.Client, err
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, fmt.Errorf(
 			"invalid RPC URL %q: expected an http or https URL with a host (e.g. https://soroban-testnet.stellar.org)",
-			network.RPCURL)
+			network.DisplayRPCURL())
 	}
 	return stellar.NewRPCClient(stellar.RPCOptions{
 		URL:               network.RPCURL,
@@ -595,7 +595,7 @@ func (s *Service) recordFailure(ctx context.Context, r resolved, action store.Ac
 func (s *Service) runTransaction(
 	ctx context.Context,
 	r resolved,
-	op *txnbuild.InvokeHostFunction,
+	op txnbuild.Operation,
 	step string,
 	dryRun bool,
 ) (txResult, error) {

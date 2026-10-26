@@ -92,9 +92,9 @@ func buildResolvedConfig(cfg *config.Config) resolvedConfig {
 
 	for name, network := range cfg.Networks {
 		view.Networks[name] = resolvedNetwork{
-			RPCURL:       network.RPCURL,
+			RPCURL:       network.DisplayRPCURL(),
 			Passphrase:   network.Passphrase,
-			SoroVaultURL: network.SoroVaultURL,
+			SoroVaultURL: network.DisplaySoroVaultURL(),
 		}
 	}
 	for alias, contract := range cfg.Contracts {

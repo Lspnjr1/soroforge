@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/soroworks/soroforge/internal/config"
 	"github.com/soroworks/soroforge/internal/deploy"
@@ -11,15 +12,17 @@ import (
 
 func newDeployCmd() *cobra.Command {
 	var (
-		dryRun      bool
-		yes         bool
-		notes       string
-		gitCommit   string
-		requireSpec bool
-		all         bool
-		argFlags    []string
-		argsFile    string
-		progress    bool
+		dryRun         bool
+		yes            bool
+		notes          string
+		gitCommit      string
+		requireSpec    bool
+		all            bool
+		argFlags       []string
+		argsFile       string
+		progress       bool
+		extendTTL      bool
+		confirmTimeout time.Duration
 	)
 
 	cmd := &cobra.Command{
@@ -64,12 +67,17 @@ refuses rather than hanging. --dry-run never prompts.`,
 			return cobra.ExactArgs(1)(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkConfirmTimeout(cmd.Flags().Changed("confirm-timeout"), confirmTimeout); err != nil {
+				return err
+			}
+
 			// A dry run writes nothing, so it does not need a database — that
 			// makes it usable as a config check in a fresh checkout.
 			a, err := newApp(cmd.Context(), appOptions{
-				requireSigner: true,
-				storeOptional: dryRun,
-				progress:      progressFor(progress),
+				requireSigner:  true,
+				storeOptional:  dryRun,
+				progress:       progressFor(progress),
+				confirmTimeout: confirmTimeout,
 			})
 			if err != nil {
 				return err
@@ -114,6 +122,8 @@ refuses rather than hanging. --dry-run never prompts.`,
 				DryRun:      dryRun,
 				GitCommit:   gitCommit,
 				RequireSpec: requireSpec,
+				ExtendTTL:   extendTTL,
+				Actor:       "cli",
 			}
 
 			switch {
@@ -147,6 +157,8 @@ refuses rather than hanging. --dry-run never prompts.`,
 
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"assemble and simulate without submitting or recording anything")
+	cmd.Flags().BoolVar(&extendTTL, "extend-ttl", false,
+		"after confirming, extend the new contract's TTLs to the network's maximum")
 	cmd.Flags().BoolVar(&yes, "yes", false,
 		"skip the typed confirmation on protected networks (for CI)")
 	cmd.Flags().StringVar(&notes, "notes", "",
@@ -159,6 +171,8 @@ refuses rather than hanging. --dry-run never prompts.`,
 		"JSON file with an array of {type, value} constructor arguments; replaces the config's")
 	cmd.Flags().BoolVar(&progress, "progress", false,
 		"show progress on stderr even when stderr is not a terminal")
+	cmd.Flags().DurationVar(&confirmTimeout, "confirm-timeout", 0,
+		"how long to wait for a transaction to confirm (default 2m; must be positive)")
 	attachAliasCompletion(cmd)
 	cmd.Flags().StringVar(&gitCommit, "git-commit", "", "override the detected source commit")
 	cmd.Flags().BoolVar(&requireSpec, "require-spec", false,

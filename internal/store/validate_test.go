@@ -16,6 +16,7 @@ func validDeployment() store.Deployment {
 		WasmHash:       "3f2a",
 		Action:         store.ActionDeploy,
 		DeployerPubkey: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		Actor:          "cli",
 	}
 }
 
