@@ -37,6 +37,79 @@ func gitMetadata(dir, override string) (string, bool) {
 	return commit, err == nil && len(strings.TrimSpace(string(output))) > 0
 }
 
+// resolveContractRefs recursively resolves "contract" type arguments in the
+// given list by looking up the referenced contract's tracked address in the
+// store. It modifies the args in place. The inRunDeployments map provides
+// contract IDs for contracts deployed earlier in the same run (for dry runs).
+func (s *Service) resolveContractRefs(ctx context.Context, network string, args []config.Arg, inRunDeployments map[string]string) error {
+	for i := range args {
+		if err := s.resolveContractRefInArg(ctx, network, &args[i], inRunDeployments); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) resolveContractRefInArg(ctx context.Context, network string, arg *config.Arg, inRunDeployments map[string]string) error {
+	argType := strings.ToLower(strings.TrimSpace(arg.Type))
+	switch argType {
+	case config.ArgContract:
+		if arg.ContractRef == "" {
+			return fmt.Errorf("contract reference missing contract alias")
+		}
+		// First check if the contract was deployed earlier in this run.
+		if inRunDeployments != nil {
+			if contractID, ok := inRunDeployments[arg.ContractRef]; ok {
+				arg.Type = config.ArgAddress
+				arg.Value = config.NewValue(contractID)
+				arg.ContractRef = ""
+				return nil
+			}
+		}
+		tracked, err := s.store.GetContract(ctx, network, arg.ContractRef)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("contract %q is not tracked on %s; deploy it first or remove the reference", arg.ContractRef, network)
+			}
+			return fmt.Errorf("lookup contract %q on %s: %w", arg.ContractRef, network, err)
+		}
+		// Replace with an address argument
+		arg.Type = config.ArgAddress
+		arg.Value = config.NewValue(tracked.ContractID)
+		arg.ContractRef = ""
+
+	case config.ArgVec:
+		var items []config.Arg
+		if err := arg.Value.Decode(&items); err != nil {
+			return fmt.Errorf("vec: expected a list of args: %w", err)
+		}
+		for j := range items {
+			if err := s.resolveContractRefInArg(ctx, network, &items[j], inRunDeployments); err != nil {
+				return fmt.Errorf("vec[%d]: %w", j, err)
+			}
+		}
+		// Re-encode the resolved items
+		arg.Value = config.NewValue(items)
+
+	case config.ArgMap:
+		var entries []config.MapEntry
+		if err := arg.Value.Decode(&entries); err != nil {
+			return fmt.Errorf("map: expected a list of {{key, value}} pairs: %w", err)
+		}
+		for j := range entries {
+			if err := s.resolveContractRefInArg(ctx, network, &entries[j].Key, inRunDeployments); err != nil {
+				return fmt.Errorf("map[%d].key: %w", j, err)
+			}
+			if err := s.resolveContractRefInArg(ctx, network, &entries[j].Value, inRunDeployments); err != nil {
+				return fmt.Errorf("map[%d].value: %w", j, err)
+			}
+		}
+		// Re-encode the resolved entries
+		arg.Value = config.NewValue(entries)
+	}
+	return nil
+}
+
 // DeployRequest asks for a contract to be deployed.
 type DeployRequest struct {
 	// Alias names a contract in soroforge.yaml.
@@ -52,6 +125,10 @@ type DeployRequest struct {
 	// records nothing.
 	DryRun bool `json:"dry_run,omitempty"`
 
+	// ExtendTTL renews the new contract's instance and code TTLs to the
+	// network's maximum after the deploy confirms. Ignored on a dry run.
+	ExtendTTL bool `json:"extend_ttl,omitempty"`
+
 	// ConstructorArgs overrides the contract's configured constructor_args
 	// for this one deploy. A non-nil slice — including an empty one — replaces
 	// the resolved config value entirely; nil keeps it. The CLI sets this from
@@ -64,6 +141,16 @@ type DeployRequest struct {
 	// RequireSpec makes a missing contractspecv0 section an error rather than a
 	// warning.
 	RequireSpec bool `json:"require_spec,omitempty"`
+
+	// Actor is the identity that triggered the deployment. For CLI this is
+	// "cli"; for API it is the token name. It is recorded in the deployment
+	// history for audit purposes.
+	Actor string `json:"-"`
+
+	// InRunDeployments provides contract IDs for contracts deployed earlier
+	// in the same DeployAll run, used for resolving contract references during
+	// dry runs. Key is the contract alias, value is the contract ID.
+	InRunDeployments map[string]string `json:"-"`
 }
 
 // DeployResult describes a completed or simulated deploy.
@@ -122,6 +209,17 @@ type DeployResult struct {
 	// on a dry run or when no registry is configured.
 	Catalog *CatalogStatus `json:"catalog,omitempty"`
 
+	// Extension reports the TTL extension --extend-ttl requested. Absent
+	// unless the extension succeeded.
+	Extension *ExtendResult `json:"extension,omitempty"`
+
+	// ExtensionError is set when --extend-ttl was requested but the
+	// extension failed after the deploy was confirmed and recorded. The
+	// contract is live; retrying the extension with `soroforge extend` is the
+	// recovery path, which is why this is reported rather than treated as a
+	// failed deploy.
+	ExtensionError string `json:"extension_error,omitempty"`
+
 	// Webhooks reports the outcome of delivering notifications to configured
 	// webhook endpoints. Absent on a dry run or when no webhooks are configured.
 	Webhooks []WebhookStatus `json:"webhooks,omitempty"`
@@ -135,6 +233,9 @@ type DeployResult struct {
 // hash, then a contract instance is created from that hash. The instance is
 // what gets an address; the bytecode is shared by every contract using it.
 func (s *Service) Deploy(ctx context.Context, req DeployRequest) (_ *DeployResult, err error) {
+	if req.Actor == "" {
+		req.Actor = "cli"
+	}
 	r, err := s.resolve(req.Network, req.Alias)
 	if err != nil {
 		return nil, err
@@ -202,6 +303,10 @@ func (s *Service) Deploy(ctx context.Context, req DeployRequest) (_ *DeployResul
 	contractArgs := r.Contract.ConstructorArgs
 	if req.ConstructorArgs != nil {
 		contractArgs = req.ConstructorArgs
+	}
+	// Resolve any contract references in the constructor arguments.
+	if err := s.resolveContractRefs(ctx, r.NetworkName, contractArgs, nil); err != nil {
+		return nil, fmt.Errorf("resolve contract references for %s: %w", r.Alias, err)
 	}
 	args, err := config.ArgsToScVals(contractArgs)
 	if err != nil {
@@ -320,6 +425,7 @@ func (s *Service) Deploy(ctx context.Context, req DeployRequest) (_ *DeployResul
 				WasmHash:       wasmHashHex,
 				Action:         store.ActionDeploy,
 				DeployerPubkey: signer.Address(),
+				Actor:          req.Actor,
 				TxHash:         create.Hash,
 				Ledger:         create.Ledger,
 				Notes:          failNotes,
@@ -342,6 +448,7 @@ func (s *Service) Deploy(ctx context.Context, req DeployRequest) (_ *DeployResul
 		WasmHash:        wasmHashHex,
 		Action:          store.ActionDeploy,
 		DeployerPubkey:  signer.Address(),
+		Actor:           req.Actor,
 		TxHash:          create.Hash,
 		Ledger:          create.Ledger,
 		Notes:           req.Notes,
@@ -355,6 +462,16 @@ func (s *Service) Deploy(ctx context.Context, req DeployRequest) (_ *DeployResul
 		return nil, err
 	}
 	result.Deployment = deployment
+
+	if req.ExtendTTL && !req.DryRun {
+		result.Extension, result.ExtensionError = s.extendAfterChange(ctx, r, signer, store.Contract{
+			Alias:           r.Alias,
+			Network:         r.NetworkName,
+			ContractID:      contractID,
+			CurrentWasmHash: wasmHashHex,
+		}, req.Actor, log)
+	}
+
 	result.Catalog = s.publish(ctx, r, contractID, log)
 	result.Webhooks = s.notifyWebhooks(ctx, r.Network, WebhookPayload{
 		Alias:          r.Alias,
@@ -420,7 +537,7 @@ type DeployAllResult struct {
 }
 
 // DeployAll deploys every contract in the config that is not yet tracked on
-// the network, in alias order, and skips the ones that are already tracked.
+// the network, in dependency order, and skips the ones that are already tracked.
 //
 // A tracked contract is skipped rather than redeployed: deploying it again
 // would create a second contract and silently move the alias to a new address.
@@ -429,23 +546,40 @@ type DeployAllResult struct {
 // failure itself — are returned alongside the error, so callers can report
 // what succeeded before the run stopped.
 //
-// Contracts are processed in alias order, which does not resolve dependencies
-// between them (a constructor argument that needs another contract's address
-// cannot be discovered here); such projects need explicit ordering.
+// Contracts are processed in dependency order: if a contract's constructor
+// arguments reference another contract via {type: address, contract: <alias>},
+// the referenced contract is deployed first. A dependency cycle is reported
+// as a config error.
 func (s *Service) DeployAll(ctx context.Context, req DeployAllRequest) ([]DeployAllResult, error) {
 	name, _, err := s.cfg.Network(req.Network)
 	if err != nil {
 		return nil, err
 	}
 
-	aliases := make([]string, 0, len(s.cfg.Contracts))
-	for alias := range s.cfg.Contracts {
-		aliases = append(aliases, alias)
+	// Build dependency graph for untracked contracts.
+	untracked := make(map[string]config.Contract)
+	for alias, contract := range s.cfg.Contracts {
+		_, err := s.store.GetContract(ctx, name, alias)
+		if errors.Is(err, store.ErrNotFound) {
+			untracked[alias] = contract
+		} else if err != nil {
+			return nil, fmt.Errorf("check whether %s is tracked on %s: %w", alias, name, err)
+		}
 	}
-	sort.Strings(aliases)
 
-	results := make([]DeployAllResult, 0, len(aliases))
-	for _, alias := range aliases {
+	// Compute deploy order: topological sort based on contract references.
+	deployOrder, err := s.computeDeployOrder(ctx, name, untracked)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]DeployAllResult, 0, len(s.cfg.Contracts))
+
+	// Track contracts deployed in this run (for dry-run reference resolution).
+	deployedInRun := make(map[string]string) // alias -> contractID
+
+	for _, alias := range deployOrder {
+		// Check if already tracked (could have been tracked before the run started).
 		_, err := s.store.GetContract(ctx, name, alias)
 		switch {
 		case err == nil:
@@ -457,10 +591,12 @@ func (s *Service) DeployAll(ctx context.Context, req DeployAllRequest) ([]Deploy
 		}
 
 		result, err := s.Deploy(ctx, DeployRequest{
-			Alias:   alias,
-			Network: name,
-			Notes:   req.Notes,
-			DryRun:  req.DryRun,
+			Alias:            alias,
+			Network:          name,
+			Notes:            req.Notes,
+			DryRun:           req.DryRun,
+			Actor:            "cli",
+			InRunDeployments: deployedInRun,
 		})
 		if err != nil {
 			results = append(results, DeployAllResult{
@@ -476,7 +612,29 @@ func (s *Service) DeployAll(ctx context.Context, req DeployAllRequest) ([]Deploy
 			status = DeployAllDryRun
 		}
 		results = append(results, DeployAllResult{Alias: alias, Status: status, Result: result})
+
+		// Record the deployed contract ID for reference resolution in subsequent dry runs.
+		if result.ContractID != "" {
+			deployedInRun[alias] = result.ContractID
+		}
 	}
+
+	// Add skipped contracts (already tracked before the run) to results.
+	for alias := range s.cfg.Contracts {
+		if _, found := deployedInRun[alias]; !found {
+			_, err := s.store.GetContract(ctx, name, alias)
+			if err == nil {
+				s.log.Info("contract is already tracked, skipping", "alias", alias, "network", name)
+				results = append(results, DeployAllResult{Alias: alias, Status: DeployAllSkipped})
+			}
+		}
+	}
+
+	// Sort results by alias for consistent output.
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Alias < results[j].Alias
+	})
+
 	return results, nil
 }
 
@@ -645,6 +803,7 @@ func (s *Service) deploySAC(
 		WasmHash:       "stellar_asset",
 		Action:         store.ActionDeploy,
 		DeployerPubkey: signer.Address(),
+		Actor:          req.Actor,
 		TxHash:         result.CreateTxHash,
 		Ledger:         result.Ledger,
 		Notes:          notes,
@@ -656,6 +815,101 @@ func (s *Service) deploySAC(
 	result.Catalog = s.publish(ctx, r, contractID, log)
 
 	return result, nil
+}
+
+// computeDeployOrder returns a topologically sorted list of contract aliases
+// based on contract references in their constructor arguments.
+func (s *Service) computeDeployOrder(ctx context.Context, network string, contracts map[string]config.Contract) ([]string, error) {
+	// Build adjacency list and in-degree count.
+	adj := make(map[string][]string)
+	inDegree := make(map[string]int)
+
+	// Initialize all contracts with in-degree 0.
+	for alias := range contracts {
+		inDegree[alias] = 0
+		adj[alias] = nil
+	}
+
+	// Extract contract references from constructor args.
+	for alias, contract := range contracts {
+		refs := s.extractContractRefs(contract.ConstructorArgs)
+		for _, ref := range refs {
+			// Only add dependency if the referenced contract is also being deployed.
+			if _, ok := contracts[ref]; ok {
+				adj[ref] = append(adj[ref], alias)
+				inDegree[alias]++
+			} else {
+				// Referenced contract is not in the untracked set.
+				// It must already be tracked on the network.
+				_, err := s.store.GetContract(ctx, network, ref)
+				if err != nil {
+					if errors.Is(err, store.ErrNotFound) {
+						return nil, fmt.Errorf("contract %q references %q which is not tracked on %s and not being deployed in this run", alias, ref, network)
+					}
+					return nil, fmt.Errorf("lookup referenced contract %q: %w", ref, err)
+				}
+				// Already tracked - no dependency needed for ordering.
+			}
+		}
+	}
+
+	// Kahn's algorithm for topological sort.
+	queue := make([]string, 0)
+	for alias, deg := range inDegree {
+		if deg == 0 {
+			queue = append(queue, alias)
+		}
+	}
+	sort.Strings(queue) // Deterministic order for contracts with no dependencies.
+
+	var result []string
+	for len(queue) > 0 {
+		// Pop from front.
+		current := queue[0]
+		queue = queue[1:]
+		result = append(result, current)
+
+		// Decrease in-degree of neighbors.
+		for _, neighbor := range adj[current] {
+			inDegree[neighbor]--
+			if inDegree[neighbor] == 0 {
+				queue = append(queue, neighbor)
+			}
+		}
+		sort.Strings(queue) // Maintain deterministic order.
+	}
+
+	if len(result) != len(contracts) {
+		// Cycle detected.
+		return nil, fmt.Errorf("dependency cycle detected among contracts: %v", contracts)
+	}
+
+	return result, nil
+}
+
+// extractContractRefs recursively extracts all contract references from args.
+func (s *Service) extractContractRefs(args []config.Arg) []string {
+	var refs []string
+	for _, arg := range args {
+		if strings.ToLower(strings.TrimSpace(arg.Type)) == config.ArgContract {
+			if arg.ContractRef != "" {
+				refs = append(refs, arg.ContractRef)
+			}
+		} else if arg.Type == config.ArgVec {
+			var items []config.Arg
+			if err := arg.Value.Decode(&items); err == nil {
+				refs = append(refs, s.extractContractRefs(items)...)
+			}
+		} else if arg.Type == config.ArgMap {
+			var entries []config.MapEntry
+			if err := arg.Value.Decode(&entries); err == nil {
+				for _, entry := range entries {
+					refs = append(refs, s.extractContractRefs([]config.Arg{entry.Key, entry.Value})...)
+				}
+			}
+		}
+	}
+	return refs
 }
 
 // checkTargetFree derives the address a fixed-salt deploy would occupy and

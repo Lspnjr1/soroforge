@@ -1,0 +1,114 @@
+name: SoroForge
+description: Install a verified SoroForge release and run one soroforge command.
+author: soroworks
+branding:
+  icon: package
+  color: purple
+
+inputs:
+  version:
+    description: Release to install, e.g. v0.2.0. "latest" resolves the newest release through the GitHub API.
+    required: false
+    default: latest
+  args:
+    description: The soroforge command line to run, e.g. "status --all".
+    required: true
+  working-directory:
+    description: Directory to run soroforge in (where soroforge.yaml lives).
+    required: false
+    default: .
+  github-token:
+    description: Token used to resolve "latest" without hitting unauthenticated rate limits.
+    required: false
+    default: ${{ github.token }}
+
+# Secrets (SOROFORGE_SECRET_KEY, DATABASE_URL, ...) are deliberately not
+# inputs: input values appear in this action's step logs. Callers pass them as
+# env: on the step, and the run step below inherits them.
+
+outputs:
+  version:
+    description: The release tag that was installed.
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install soroforge
+      id: install
+      shell: bash
+      env:
+        SOROFORGE_VERSION: ${{ inputs.version }}
+        SOROFORGE_GITHUB_TOKEN: ${{ inputs.github-token }}
+        RUNNER_OS_NAME: ${{ runner.os }}
+        RUNNER_ARCH_NAME: ${{ runner.arch }}
+      run: |
+        set -euo pipefail
+        repo="soroworks/soroforge"
+
+        case "$RUNNER_OS_NAME" in
+          Linux) os=linux ;;
+          macOS) os=darwin ;;
+          *) echo "::error::soroforge action supports Linux and macOS runners, not $RUNNER_OS_NAME"; exit 1 ;;
+        esac
+        case "$RUNNER_ARCH_NAME" in
+          X64) arch=amd64 ;;
+          ARM64) arch=arm64 ;;
+          *) echo "::error::unsupported runner architecture $RUNNER_ARCH_NAME"; exit 1 ;;
+        esac
+
+        tag="$SOROFORGE_VERSION"
+        if [ "$tag" = "latest" ]; then
+          tag="$(curl -fsSL \
+            -H "Authorization: Bearer $SOROFORGE_GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$repo/releases/latest" \
+            | sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p')"
+          if [ -z "$tag" ]; then
+            echo "::error::could not resolve the latest soroforge release"
+            exit 1
+          fi
+        fi
+        case "$tag" in v*) ;; *) tag="v$tag" ;; esac
+        version="${tag#v}"
+
+        archive="soroforge_${version}_${os}_${arch}.tar.gz"
+        base="https://github.com/$repo/releases/download/$tag"
+        dir="$RUNNER_TEMP/soroforge-$version"
+        mkdir -p "$dir"
+
+        curl -fsSL -o "$dir/$archive" "$base/$archive"
+        curl -fsSL -o "$dir/checksums.txt" "$base/checksums.txt"
+
+        expected="$(awk -v f="$archive" '$2 == f || $2 == "*"f { print $1 }' "$dir/checksums.txt")"
+        if [ -z "$expected" ]; then
+          echo "::error::$archive is not listed in checksums.txt for $tag"
+          exit 1
+        fi
+        if command -v sha256sum >/dev/null 2>&1; then
+          actual="$(sha256sum "$dir/$archive" | awk '{ print $1 }')"
+        else
+          actual="$(shasum -a 256 "$dir/$archive" | awk '{ print $1 }')"
+        fi
+        if [ "$expected" != "$actual" ]; then
+          echo "::error::checksum mismatch for $archive: expected $expected, got $actual"
+          exit 1
+        fi
+        echo "verified $archive ($actual)"
+
+        tar -xzf "$dir/$archive" -C "$dir" soroforge
+        chmod +x "$dir/soroforge"
+        echo "$dir" >> "$GITHUB_PATH"
+        echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+    - name: Run soroforge
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SOROFORGE_ARGS: ${{ inputs.args }}
+      run: |
+        set -euo pipefail
+        # Split the args the way a shell would, so quoted values survive,
+        # then exec so soroforge's exit code is the step's.
+        eval "set -- $SOROFORGE_ARGS"
+        exec soroforge "$@"

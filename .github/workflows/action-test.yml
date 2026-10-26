@@ -1,0 +1,65 @@
+name: action-test
+
+# Self-test for the composite action in action.yml: install a pinned release
+# on each supported runner OS and run a command through it.
+
+on:
+  pull_request:
+    paths:
+      - action.yml
+      - .github/workflows/action-test.yml
+  push:
+    branches: [main]
+    paths:
+      - action.yml
+      - .github/workflows/action-test.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  action:
+    name: ${{ matrix.os }} / ${{ matrix.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        version: [v0.2.0, latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run soroforge version through the action
+        id: run
+        uses: ./
+        with:
+          version: ${{ matrix.version }}
+          args: version
+
+      - name: The installed release is reported
+        shell: bash
+        env:
+          INSTALLED: ${{ steps.run.outputs.version }}
+        run: |
+          test -n "$INSTALLED"
+          echo "installed $INSTALLED"
+
+      # A failing command must fail the step, so `status --all` can gate a job.
+      - name: A non-zero exit propagates
+        id: failing
+        continue-on-error: true
+        uses: ./
+        with:
+          version: ${{ matrix.version }}
+          args: definitely-not-a-command
+
+      - name: Assert the failing command failed the step
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.failing.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::a failing soroforge command did not fail the step (outcome: $OUTCOME)"
+            exit 1
+          fi

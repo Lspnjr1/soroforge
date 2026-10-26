@@ -28,7 +28,9 @@ networks:
     # sorovault_url: http://localhost:8080
 
   # There is no public SDF-hosted mainnet RPC. Point this at a provider you
-  # trust, or at your own node.
+  # trust, or at your own node. A provider API key belongs in the environment:
+  # rpc_url and sorovault_url expand ${NAME} references, e.g.
+  #   rpc_url: https://provider.example/v1/${MAINNET_RPC_KEY}
   mainnet:
     rpc_url: https://mainnet.sorobanrpc.com
     passphrase: "Public Global Stellar Network ; September 2015"

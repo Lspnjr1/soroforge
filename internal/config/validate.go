@@ -81,15 +81,17 @@ func validateNetwork(name string, n Network) []string {
 		return []string{"networks: network names must not be empty"}
 	}
 
+	// URLs are checked expanded, but a parse error quotes the value it failed
+	// on, so the problem is reported with any ${NAME} reference unexpanded.
 	if strings.TrimSpace(n.RPCURL) == "" {
 		problems = append(problems, prefix+".rpc_url: must be set")
 	} else if p := checkHTTPURL(prefix+".rpc_url", n.RPCURL); p != "" {
-		problems = append(problems, p)
+		problems = append(problems, n.RedactURLs(p))
 	}
 
 	if n.SoroVaultURL != "" {
 		if p := checkHTTPURL(prefix+".sorovault_url", n.SoroVaultURL); p != "" {
-			problems = append(problems, p)
+			problems = append(problems, n.RedactURLs(p))
 		}
 	}
 

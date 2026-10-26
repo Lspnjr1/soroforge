@@ -94,6 +94,8 @@ networks:
   testnet:
     rpc_url: https://soroban-testnet.stellar.org
     passphrase: "Test SDF Network ; September 2015"
+    # ` + "`soroforge fund`" + ` tops up the deployer account from this faucet:
+    friendbot_url: https://friendbot.stellar.org
     # Register every confirmed deploy with a SoroVault registry:
     # sorovault_url: http://localhost:8080
 

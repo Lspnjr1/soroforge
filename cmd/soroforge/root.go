@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/soroworks/soroforge/internal/config"
 	"github.com/soroworks/soroforge/internal/deploy"
@@ -78,10 +79,16 @@ the README security notes.`,
 		newUpgradeCmd(),
 		newUploadCmd(),
 		newInvokeCmd(),
+		newExtendCmd(),
+		newRestoreCmd(),
+		newFundCmd(),
+		newWhoAmICmd(),
+		newTrackCmd(),
 		newListCmd(),
 		newHistoryCmd(),
 		newStatusCmd(),
 		newDiffCmd(),
+		newAliasCmd(),
 		newNetworksCmd(),
 		newServeCmd(),
 		newMigrateCmd(),
@@ -174,15 +181,21 @@ type appOptions struct {
 	requireSigner bool
 
 	// storeOptional allows the command to run without Postgres, using a
-	// throwaway in-memory store. Only `deploy --dry-run` sets it: a dry run
-	// records nothing, so requiring a database to validate a config would be
-	// friction with no purpose. Every command that writes history still
-	// insists on a real database.
+	// throwaway in-memory store. Commands that never touch deployment history
+	// set it — `deploy --dry-run`, `fund`, and `whoami` — because requiring a
+	// database to validate a config or fund an account would be friction with
+	// no purpose. Every command that reads or writes history still insists on
+	// a real database.
 	storeOptional bool
 
 	// progress receives deploy progress events. Nil keeps the service silent,
 	// which is what read-only commands and `serve` want.
 	progress deploy.ProgressFunc
+
+	// confirmTimeout bounds waiting for transaction confirmation. Zero lets
+	// deploy.New apply DefaultConfirmTimeout (two minutes). Only deploy and
+	// upgrade set it, from --confirm-timeout.
+	confirmTimeout time.Duration
 }
 
 // newApp loads configuration, connects to Postgres, and builds the service.
@@ -231,6 +244,7 @@ func newApp(ctx context.Context, opts appOptions) (*app, error) {
 		Signer:          signer,
 		MaxContractSize: maxContractSize,
 		Progress:        opts.progress,
+		ConfirmTimeout:  opts.confirmTimeout,
 		Log:             slog.Default(),
 	})
 	if err != nil {
@@ -241,6 +255,19 @@ func newApp(ctx context.Context, opts appOptions) (*app, error) {
 	a.closers = append(a.closers, service.Close)
 
 	return a, nil
+}
+
+// checkConfirmTimeout rejects an explicit --confirm-timeout that would not
+// extend the wait: deploy.New silently substitutes DefaultConfirmTimeout for a
+// non-positive value, but a zero typed on the command line is far more likely
+// a mistake than a wish for the default, so the CLI refuses it before any
+// config is loaded or any network call is made.
+func checkConfirmTimeout(changed bool, d time.Duration) error {
+	if !changed || d > 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"--confirm-timeout must be positive (for example 5m), got %s", d)
 }
 
 // loadEnvOnly reads SoroForge's environment without requiring soroforge.yaml.

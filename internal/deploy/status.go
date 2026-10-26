@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 
 	"github.com/soroworks/soroforge/internal/stellar"
@@ -27,9 +28,13 @@ const (
 	StateUntracked State = "untracked"
 
 	// StateMissing means SoroForge has a record but the ledger has no such
-	// contract — it was never deployed to this network, or its instance entry
-	// has expired.
+	// contract — it was never deployed to this network.
 	StateMissing State = "missing"
+
+	// StateArchived means the contract exists but its instance or code TTL
+	// has expired, so it cannot be called until it is restored. The bytecode
+	// is unchanged; `soroforge restore` brings it back.
+	StateArchived State = "archived"
 )
 
 // StatusRequest asks for a drift check.
@@ -93,6 +98,115 @@ func (s *Service) Status(ctx context.Context, req StatusRequest) (*StatusResult,
 	}
 
 	return checkTracked(ctx, r.Client, tracked)
+}
+
+// VerifyOutcome is the answer to "is my local build the one that is live?".
+type VerifyOutcome string
+
+const (
+	// VerifyMatch means the local WASM is byte-for-byte what the contract runs.
+	VerifyMatch VerifyOutcome = "match"
+
+	// VerifyDiffers means the contract runs different bytecode.
+	VerifyDiffers VerifyOutcome = "differs"
+
+	// VerifyUnavailable means there is nothing on-chain to compare against:
+	// the contract is not tracked on the network, or it has no instance.
+	VerifyUnavailable VerifyOutcome = "unavailable"
+)
+
+// VerifyRequest asks whether an alias's local build is the one deployed.
+type VerifyRequest struct {
+	Alias   string `json:"alias"`
+	Network string `json:"network,omitempty"`
+}
+
+// VerifyResult compares a local WASM artifact with what the tracked contract
+// runs on-chain.
+type VerifyResult struct {
+	Alias      string        `json:"alias"`
+	Network    string        `json:"network"`
+	ContractID string        `json:"contract_id,omitempty"`
+	Outcome    VerifyOutcome `json:"outcome"`
+
+	// WasmPath is the local artifact that was hashed.
+	WasmPath string `json:"wasm_path"`
+
+	// LocalWasmHash is the hash of the artifact at WasmPath.
+	LocalWasmHash string `json:"local_wasm_hash"`
+
+	// LiveWasmHash is what the contract runs, when it is on-chain.
+	LiveWasmHash string `json:"live_wasm_hash,omitempty"`
+
+	// Detail explains the outcome in a sentence, for CLI output.
+	Detail string `json:"detail"`
+}
+
+// Verify hashes the alias's local WASM artifact and compares it with what the
+// tracked contract runs on-chain. It needs no signing key.
+//
+// Where Status tests SoroForge's record against the ledger, Verify tests the
+// working tree: it is the check to run before a release, to confirm a rebuild
+// is reproducible or that a hotfix really differs from production.
+func (s *Service) Verify(ctx context.Context, req VerifyRequest) (*VerifyResult, error) {
+	r, err := s.resolve(req.Network, req.Alias)
+	if err != nil {
+		return nil, err
+	}
+
+	path := s.cfg.WasmPath(r.Contract)
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("wasm artifact not found at %s; build it with `stellar contract build` first", path)
+	}
+	wasm, err := s.readWasm(r.Contract)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &VerifyResult{
+		Alias:         r.Alias,
+		Network:       r.NetworkName,
+		WasmPath:      path,
+		LocalWasmHash: stellar.HashHex(stellar.WasmHash(wasm)),
+	}
+
+	tracked, err := s.store.GetContract(ctx, r.NetworkName, r.Alias)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			result.Outcome = VerifyUnavailable
+			result.Detail = fmt.Sprintf(
+				"%s is not tracked on %s; there is no deployed contract to compare against",
+				r.Alias, r.NetworkName)
+			return result, nil
+		}
+		return nil, err
+	}
+	result.ContractID = tracked.ContractID
+
+	// checkTracked does the on-chain read; only the live hash is used here.
+	status, err := checkTracked(ctx, r.Client, tracked)
+	if err != nil {
+		return nil, err
+	}
+	if status.State == StateMissing {
+		result.Outcome = VerifyUnavailable
+		result.Detail = fmt.Sprintf(
+			"%s is tracked at %s on %s, but that contract has no instance on-chain",
+			r.Alias, tracked.ContractID, r.NetworkName)
+		return result, nil
+	}
+
+	result.LiveWasmHash = status.ActualWasmHash
+	if result.LiveWasmHash == result.LocalWasmHash {
+		result.Outcome = VerifyMatch
+		result.Detail = fmt.Sprintf("the local build of %s is the one live on %s", r.Alias, r.NetworkName)
+		return result, nil
+	}
+	result.Outcome = VerifyDiffers
+	result.Detail = fmt.Sprintf(
+		"the local build of %s (%s) differs from what is live on %s (%s)",
+		r.Alias, result.LocalWasmHash, r.NetworkName, result.LiveWasmHash)
+	return result, nil
 }
 
 // NetworkStatus is a drift check over every tracked contract on a network.
@@ -161,8 +275,18 @@ func checkTracked(ctx context.Context, client stellar.Client, tracked store.Cont
 			result.State = StateMissing
 			result.Detail = fmt.Sprintf(
 				"SoroForge records %s as deployed at %s on %s, but that contract has no instance "+
-					"on-chain (never deployed to this network, or its instance entry expired)",
+					"on-chain (never deployed to this network)",
 				tracked.Alias, tracked.ContractID, tracked.Network)
+			return result, nil
+		}
+
+		var archived *stellar.ErrContractArchived
+		if errors.As(err, &archived) {
+			result.State = StateArchived
+			result.Detail = fmt.Sprintf(
+				"%s on %s is archived: its TTL expired and it is no longer callable; "+
+					"run `soroforge restore %s` to bring it back",
+				tracked.Alias, tracked.Network, tracked.Alias)
 			return result, nil
 		}
 		var sacErr *stellar.ErrStellarAssetContract

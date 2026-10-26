@@ -29,10 +29,17 @@ func TestNewKeypairSignerParsesSeed(t *testing.T) {
 
 func TestNewKeypairSignerErrorDoesNotEchoSeed(t *testing.T) {
 	valid := throwawayKey(t).Seed()
+	// Replace the last character with a different one, so the checksum is
+	// always broken. Appending a fixed "A" left the seed valid whenever it
+	// already ended in "A" (about one run in 32).
+	last := "A"
+	if valid[len(valid)-1] == 'A' {
+		last = "B"
+	}
 	malformed := []string{
 		"",
 		"not-a-seed",
-		valid[:len(valid)-1] + "A", // checksum broken
+		valid[:len(valid)-1] + last, // checksum broken
 		valid[:20],
 		throwawayKey(t).Address(), // a public key is not a seed
 	}
