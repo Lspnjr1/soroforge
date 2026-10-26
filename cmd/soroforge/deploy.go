@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/soroworks/soroforge/internal/config"
@@ -113,13 +111,6 @@ refuses rather than hanging. --dry-run never prompts.`,
 			}
 
 			if all {
-				for alias, contract := range a.cfg.Contracts {
-					if contract.BuildCommand != "" {
-						if err := runBuild(cmd, a.cfg.Dir(), alias, contract.BuildCommand); err != nil {
-							return err
-						}
-					}
-				}
 				if cmd.Flags().Changed("arg") || cmd.Flags().Changed("args-file") {
 					return fmt.Errorf(
 						"--arg and --args-file are per-contract and cannot be combined with --all")
@@ -147,12 +138,6 @@ refuses rather than hanging. --dry-run never prompts.`,
 				ExtendTTL:   extendTTL,
 				Actor:       "cli",
 			}
-			if contract, ok := a.cfg.Contracts[args[0]]; ok && contract.BuildCommand != "" {
-				if err := runBuild(cmd, a.cfg.Dir(), args[0], contract.BuildCommand); err != nil {
-					return err
-				}
-			}
-
 			switch {
 			case cmd.Flags().Changed("arg") && cmd.Flags().Changed("args-file"):
 				return fmt.Errorf("--arg and --args-file are mutually exclusive; use one or the other")
@@ -208,17 +193,4 @@ refuses rather than hanging. --dry-run never prompts.`,
 		"fail instead of warning when the WASM exports no contractspecv0 section")
 
 	return cmd
-}
-
-func runBuild(cmd *cobra.Command, dir, alias, command string) error {
-	if strings.TrimSpace(command) == "" {
-		return nil
-	}
-	c := exec.CommandContext(cmd.Context(), "sh", "-c", command)
-	c.Dir = dir
-	c.Stdout, c.Stderr = cmd.OutOrStdout(), cmd.ErrOrStderr()
-	if err := c.Run(); err != nil {
-		return fmt.Errorf("build %s: %w", alias, err)
-	}
-	return nil
 }
