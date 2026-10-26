@@ -96,6 +96,10 @@ const (
 	// sole way in.
 	EnvAPITrustProxy = "SOROFORGE_API_TRUST_PROXY"
 
+	// EnvAPIMetrics opts in to the Prometheus endpoint when true. The endpoint
+	// is disabled by default; `soroforge serve --metrics` enables it as well.
+	EnvAPIMetrics = "SOROFORGE_API_METRICS"
+
 	// EnvAPICORSOrigins lists the exact browser origins allowed to call the
 	// HTTP API from another origin, as a comma-separated list such as
 	// "https://dash.example.com,https://ops.example.com". Unset (the default)
@@ -148,6 +152,7 @@ type Env struct {
 	APIRateLimit      string
 	APIRateBurst      string
 	APITrustProxy     string
+	APIMetrics        string
 	TLSCert           string
 	TLSKey            string
 	// AllowInsecureKeystore accepts a keystore readable by group or others.
@@ -176,9 +181,24 @@ func LoadEnv() Env {
 		APIRateLimit:          strings.TrimSpace(os.Getenv(EnvAPIRateLimit)),
 		APIRateBurst:          strings.TrimSpace(os.Getenv(EnvAPIRateBurst)),
 		APITrustProxy:         strings.TrimSpace(os.Getenv(EnvAPITrustProxy)),
+		APIMetrics:            strings.TrimSpace(os.Getenv(EnvAPIMetrics)),
 		TLSCert:               strings.TrimSpace(os.Getenv(EnvTLSCert)),
 		TLSKey:                strings.TrimSpace(os.Getenv(EnvTLSKey)),
 	}
+}
+
+// MetricsEnabled reports whether SOROFORGE_API_METRICS opts in to Prometheus
+// metrics. Invalid values are errors so a typo cannot silently disable scrape
+// output.
+func (e Env) MetricsEnabled() (bool, error) {
+	if e.APIMetrics == "" {
+		return false, nil
+	}
+	enabled, err := strconv.ParseBool(e.APIMetrics)
+	if err != nil {
+		return false, fmt.Errorf("%s=%q is not a boolean (true or false)", EnvAPIMetrics, e.APIMetrics)
+	}
+	return enabled, nil
 }
 
 // ParseCORSOrigins splits EnvAPICORSOrigins's comma-separated value into

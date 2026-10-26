@@ -117,6 +117,10 @@ type Options struct {
 	// JobRetention is how long finished async jobs stay fetchable. Defaults to
 	// DefaultJobRetention; tests shorten it.
 	JobRetention time.Duration
+
+	// MetricsEnabled exposes the authenticated Prometheus endpoint at /metrics.
+	// It is disabled by default.
+	MetricsEnabled bool
 }
 
 // route is one endpoint, the scope a token must hold to call it, and its
@@ -140,7 +144,7 @@ type route struct {
 // monitoring system should not need to hold a credential that can deploy in
 // order to ask whether the process is alive or ready.
 func (h *handlers) routes() []route {
-	return []route{
+	routes := []route{
 		{http.MethodGet, "/health", ScopePublic, h.health},
 		{http.MethodGet, "/ready", ScopePublic, h.ready},
 		{http.MethodGet, "/openapi.json", ScopePublic, h.openapi},
@@ -158,6 +162,10 @@ func (h *handlers) routes() []route {
 
 		{http.MethodGet, "/v1/deployments/{id}", ScopeRead, h.getDeployment},
 	}
+	if h.metrics != nil {
+		routes = append(routes, route{http.MethodGet, "/metrics", ScopeRead, h.metrics.serveHTTP})
+	}
+	return routes
 }
 
 // NewRouter builds the HTTP handler.
@@ -197,11 +205,17 @@ func NewRouter(opts Options) (http.Handler, error) {
 		log:       log,
 		jobs:      newJobManager(opts.JobRetention, log),
 	}
+	if opts.MetricsEnabled {
+		h.metrics = newAPIMetrics(h.jobs)
+	}
 	auth := &authenticator{tokens: opts.Tokens}
 	rateLimit := RateLimit(opts.RateLimit)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
+	if h.metrics != nil {
+		r.Use(h.metrics.middleware)
+	}
 	// The access log wraps the recoverer so a panic's 500 is logged with its
 	// status like any other response.
 	r.Use(accessLog(log))
@@ -321,6 +335,7 @@ type handlers struct {
 	readiness Readiness
 	log       *slog.Logger
 	jobs      *jobManager
+	metrics   *apiMetrics
 }
 
 // errorResponse is the body returned for every failure, so clients can parse

@@ -208,6 +208,36 @@ func newRouter(t *testing.T, svc api.Service, rd api.Readiness, logger *slog.Log
 	return router
 }
 
+func TestMetricsEndpointIsOptInAndRequiresReadScope(t *testing.T) {
+	svc := &fakeService{contracts: []store.Contract{}}
+	disabled := newRouter(t, svc, healthyReadiness{}, nil)
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer "+testReadOnlyToken)
+	response := httptest.NewRecorder()
+	disabled.ServeHTTP(response, req)
+	assert.Equal(t, http.StatusNotFound, response.Code)
+
+	enabled, err := api.NewRouter(api.Options{
+		Service:        svc,
+		Tokens:         testTokens(),
+		Readiness:      healthyReadiness{},
+		MetricsEnabled: true,
+	})
+	require.NoError(t, err)
+
+	unauthorized := httptest.NewRecorder()
+	enabled.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	assert.Equal(t, http.StatusUnauthorized, unauthorized.Code)
+
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer "+testReadOnlyToken)
+	response = httptest.NewRecorder()
+	enabled.ServeHTTP(response, req)
+	assert.Equal(t, http.StatusOK, response.Code)
+	assert.Contains(t, response.Body.String(), "soroforge_http_requests_total")
+	assert.Contains(t, response.Body.String(), "soroforge_async_jobs")
+}
+
 func newTestRouter(t *testing.T, svc api.Service) http.Handler {
 	t.Helper()
 	return newRouter(t, svc, healthyReadiness{},

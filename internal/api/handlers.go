@@ -63,18 +63,25 @@ func (h *handlers) deploy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	run := func(ctx context.Context) (*deploy.DeployResult, error) {
+		result, err := h.svc.Deploy(ctx, req)
+		if h.metrics != nil {
+			h.metrics.recordDeployment("deploy", err)
+		}
+		return result, err
+	}
 	if async {
 		h.submitJob(w, jobSpec{
 			alias:   req.Alias,
 			network: req.Network,
 			run: func(ctx context.Context) (any, error) {
-				return h.svc.Deploy(ctx, req)
+				return run(ctx)
 			},
 		})
 		return
 	}
 
-	result, err := h.svc.Deploy(r.Context(), req)
+	result, err := run(r.Context())
 	if err != nil {
 		h.log.Error("deploy failed", "alias", req.Alias, "network", req.Network, "error", err)
 		writeError(w, statusForError(err), err.Error())
@@ -111,18 +118,25 @@ func (h *handlers) upgrade(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	run := func(ctx context.Context) (*deploy.UpgradeResult, error) {
+		result, err := h.svc.Upgrade(ctx, req)
+		if h.metrics != nil {
+			h.metrics.recordDeployment("upgrade", err)
+		}
+		return result, err
+	}
 	if async {
 		h.submitJob(w, jobSpec{
 			alias:   req.Alias,
 			network: req.Network,
 			run: func(ctx context.Context) (any, error) {
-				return h.svc.Upgrade(ctx, req)
+				return run(ctx)
 			},
 		})
 		return
 	}
 
-	result, err := h.svc.Upgrade(r.Context(), req)
+	result, err := run(r.Context())
 	if err != nil {
 		h.log.Error("upgrade failed", "alias", req.Alias, "network", req.Network, "error", err)
 		writeError(w, statusForError(err), err.Error())
