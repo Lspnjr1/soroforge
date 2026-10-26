@@ -79,6 +79,7 @@ func (m *MemoryStore) UpsertContract(ctx context.Context, c Contract) (Contract,
 		existing.ContractID = c.ContractID
 		existing.CurrentWasmHash = c.CurrentWasmHash
 		existing.UpdatedAt = now
+		// Preserve existing UntrackedAt — untracking is a separate operation.
 		m.contracts[key] = existing
 		return existing, nil
 	}
@@ -119,7 +120,9 @@ func (m *MemoryStore) ListContracts(ctx context.Context, network string) ([]Cont
 	out := []Contract{}
 	for _, c := range m.contracts {
 		if network == "" || c.Network == network {
-			out = append(out, c)
+			if c.UntrackedAt == nil {
+				out = append(out, c)
+			}
 		}
 	}
 	// Matches the Postgres ORDER BY, so callers see the same ordering from
@@ -171,6 +174,9 @@ func (m *MemoryStore) RecordDeployment(ctx context.Context, d Deployment) (Deplo
 	if d.FeeCharged != nil {
 		fee := *d.FeeCharged
 		d.FeeCharged = &fee
+	}
+	if d.Actor == "" {
+		d.Actor = "cli"
 	}
 
 	m.deployments = append(m.deployments, d)
@@ -239,6 +245,9 @@ func (m *MemoryStore) importSnapshot(ctx context.Context, contracts []Contract, 
 		}
 	}
 	for _, d := range deployments {
+		if d.Actor == "" {
+			d.Actor = "cli"
+		}
 		m.deployments = append(m.deployments, d)
 		if d.ID >= next {
 			next = d.ID + 1
@@ -313,8 +322,114 @@ func (m *MemoryStore) Attempts(ctx context.Context, network, alias string) ([]At
 	return out, nil
 }
 
+// CountAttemptsBefore implements Store.
+func (m *MemoryStore) CountAttemptsBefore(ctx context.Context, before time.Time) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	n := 0
+	for _, attempt := range m.attempts {
+		if attempt.CreatedAt.Before(before) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// PruneAttempts implements Store.
+func (m *MemoryStore) PruneAttempts(ctx context.Context, before time.Time) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	kept := m.attempts[:0]
+	removed := 0
+	for _, attempt := range m.attempts {
+		if attempt.CreatedAt.Before(before) {
+			removed++
+			continue
+		}
+		kept = append(kept, attempt)
+	}
+	m.attempts = kept
+	return removed, nil
+}
+
 // Close implements Store. There is nothing to release.
 func (m *MemoryStore) Close() error { return nil }
+
+// RenameContract renames a tracked contract's alias and all its history atomically.
+func (m *MemoryStore) RenameContract(ctx context.Context, network, oldAlias, newAlias string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Check if new alias already exists.
+	key := contractKey(network, newAlias)
+	if _, ok := m.contracts[key]; ok {
+		return fmt.Errorf("rename contract: alias %q already exists on %s", newAlias, network)
+	}
+
+	// Get the old contract.
+	oldKey := contractKey(network, oldAlias)
+	contract, ok := m.contracts[oldKey]
+	if !ok {
+		return fmt.Errorf("rename contract: %w", ErrNotFound)
+	}
+
+	// Update contract alias.
+	delete(m.contracts, oldKey)
+	contract.Alias = newAlias
+	contract.UpdatedAt = m.now()
+	m.contracts[key] = contract
+
+	// Update deployments.
+	for i := range m.deployments {
+		if m.deployments[i].Network == network && m.deployments[i].Alias == oldAlias {
+			m.deployments[i].Alias = newAlias
+		}
+	}
+
+	// Update attempts.
+	for i := range m.attempts {
+		if m.attempts[i].Network == network && m.attempts[i].Alias == oldAlias {
+			m.attempts[i].Alias = newAlias
+		}
+	}
+
+	return nil
+}
+
+// UntrackContract stops tracking a contract while keeping its history readable.
+func (m *MemoryStore) UntrackContract(ctx context.Context, network, alias string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := contractKey(network, alias)
+	contract, ok := m.contracts[key]
+	if !ok {
+		return fmt.Errorf("untrack contract: %w", ErrNotFound)
+	}
+
+	now := m.now()
+	contract.UntrackedAt = &now
+	contract.UpdatedAt = now
+	m.contracts[key] = contract
+
+	return nil
+}
 
 // GetDeployment implements Store.
 func (m *MemoryStore) GetDeployment(ctx context.Context, id int64) (Deployment, error) {

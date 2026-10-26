@@ -270,6 +270,7 @@ func TestUpgradeToWasmHashShortPrefix(t *testing.T) {
 		WasmHash:       targetHashHex,
 		Action:         store.ActionDeploy,
 		DeployerPubkey: "GABC",
+		Actor:          "cli",
 	})
 	require.NoError(t, err)
 
@@ -294,6 +295,7 @@ func TestUpgradeToWasmHashAmbiguousPrefix(t *testing.T) {
 		WasmHash:       "aaaa1111222233334444555566667777888899990000aaaabbbbccccddddeeee01",
 		Action:         store.ActionDeploy,
 		DeployerPubkey: "GABC",
+		Actor:          "cli",
 	})
 	require.NoError(t, err)
 	_, err = h.store.RecordDeployment(ctx, store.Deployment{
@@ -303,6 +305,7 @@ func TestUpgradeToWasmHashAmbiguousPrefix(t *testing.T) {
 		WasmHash:       "aaaa1111222233334444555566667777888899990000aaaabbbbccccddddeeee02",
 		Action:         store.ActionUpgrade,
 		DeployerPubkey: "GABC",
+		Actor:          "cli",
 	})
 	require.NoError(t, err)
 

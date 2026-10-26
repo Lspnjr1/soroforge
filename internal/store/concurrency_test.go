@@ -31,7 +31,7 @@ func runConcurrencySuite(t *testing.T, newStore func(t *testing.T) store.Store) 
 			hash := fmt.Sprintf("hash-%02d", i)
 			if _, err := s.RecordDeployment(ctx, store.Deployment{
 				Alias: "counter", Network: "testnet", ContractID: "CCOUNTER", WasmHash: hash,
-				Action: store.ActionDeploy, DeployerPubkey: "GABC",
+				Action: store.ActionDeploy, DeployerPubkey: "GABC", Actor: "cli",
 			}); err != nil {
 				errs <- err
 			}

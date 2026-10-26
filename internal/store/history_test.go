@@ -33,17 +33,17 @@ func runHistorySuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 		for _, d := range []store.Deployment{
 			{Alias: "counter", Network: "testnet", ContractID: "CTEST", WasmHash: "v1",
-				Action: store.ActionDeploy, DeployerPubkey: "GAAA", TxHash: "tx1", Ledger: 100},
+				Action: store.ActionDeploy, DeployerPubkey: "GAAA", Actor: "cli", TxHash: "tx1", Ledger: 100},
 			{Alias: "counter", Network: "testnet", ContractID: "CTEST", WasmHash: "v2",
-				Action: store.ActionUpgrade, DeployerPubkey: "GAAA", TxHash: "tx2", Ledger: 200,
+				Action: store.ActionUpgrade, DeployerPubkey: "GAAA", Actor: "cli", TxHash: "tx2", Ledger: 200,
 				Notes: "fix rounding"},
 			// An upload for an alias no longer tracked as a contract: the
 			// export must not lose it just because its (network, alias) has
 			// no live row.
 			{Alias: "removed", Network: "testnet", WasmHash: "deadbeef",
-				Action: store.ActionUpload, DeployerPubkey: "GZZZ"},
+				Action: store.ActionUpload, DeployerPubkey: "GZZZ", Actor: "cli"},
 			{Alias: "counter", Network: "mainnet", ContractID: "CMAIN", WasmHash: "v1",
-				Action: store.ActionDeploy, DeployerPubkey: "GBBB", TxHash: "tx3", Ledger: 5},
+				Action: store.ActionDeploy, DeployerPubkey: "GBBB", Actor: "cli", TxHash: "tx3", Ledger: 5},
 		} {
 			_, err := s.RecordDeployment(ctx, d)
 			require.NoError(t, err)
@@ -135,7 +135,7 @@ func runHistorySuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 		before := all[len(all)-1].ID
 		next, err := target.RecordDeployment(ctx, store.Deployment{
 			Alias: "counter", Network: "testnet", ContractID: "CTEST", WasmHash: "v3",
-			Action: store.ActionUpgrade, DeployerPubkey: "GAAA",
+			Action: store.ActionUpgrade, DeployerPubkey: "GAAA", Actor: "cli",
 		})
 		require.NoError(t, err)
 		assert.Greater(t, next.ID, before, "ids continue past the imported range")
@@ -254,7 +254,7 @@ func TestSnapshotValidation(t *testing.T) {
 		}},
 		Deployments: []store.Deployment{{
 			ID: 2, Alias: "counter", Network: "testnet", ContractID: "C1", WasmHash: "aa",
-			Action: store.ActionDeploy, DeployerPubkey: "GAAA", CreatedAt: time.Now().UTC(),
+			Action: store.ActionDeploy, DeployerPubkey: "GAAA", Actor: "cli", CreatedAt: time.Now().UTC(),
 		}},
 	}
 

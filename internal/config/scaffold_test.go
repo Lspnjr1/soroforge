@@ -56,6 +56,11 @@ func TestScaffoldLoadsAndValidates(t *testing.T) {
 			require.NoError(t, err, "a generated config must load as-is:\n%s", Scaffold(found))
 			assert.Equal(t, "testnet", cfg.DefaultNetwork)
 
+			// The scaffolded testnet carries a Friendbot so that `soroforge
+			// fund` works out of the box on a fresh project.
+			assert.Equal(t, "https://friendbot.stellar.org",
+				cfg.Networks["testnet"].FriendbotURL)
+
 			if found == nil {
 				require.Contains(t, cfg.Contracts, placeholderAlias)
 				return

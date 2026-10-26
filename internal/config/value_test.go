@@ -53,8 +53,8 @@ func TestValueYAMLRoundTrip(t *testing.T) {
 			assert.Equal(t, string(out), string(again))
 
 			var a, b any
-			require.NoError(t, first.Value.decode(&a))
-			require.NoError(t, second.Value.decode(&b))
+			require.NoError(t, first.Value.Decode(&a))
+			require.NoError(t, second.Value.Decode(&b))
 			assert.Equal(t, a, b)
 		})
 	}

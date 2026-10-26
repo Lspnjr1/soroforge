@@ -394,6 +394,10 @@ var badInputArgCases = map[string]struct {
 		arg:     Arg{Type: ArgXDR, Value: NewValue("!!!!")},
 		wantErr: "not a valid base64 ScVal",
 	},
+	"contract reference not resolved at deploy time": {
+		arg:     Arg{Type: ArgContract, ContractRef: "token"},
+		wantErr: "contract reference must be resolved at deploy time",
+	},
 	"missing value": {
 		arg:     Arg{Type: ArgU32},
 		wantErr: "missing value",

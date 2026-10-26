@@ -45,6 +45,7 @@ anything.`,
 				Network: flags.network,
 				Notes:   notes,
 				DryRun:  dryRun,
+				Actor:   "cli",
 			})
 			if err != nil {
 				return err

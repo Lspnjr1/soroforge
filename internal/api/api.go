@@ -40,6 +40,7 @@ import (
 type Service interface {
 	Deploy(ctx context.Context, req deploy.DeployRequest) (*deploy.DeployResult, error)
 	Upgrade(ctx context.Context, req deploy.UpgradeRequest) (*deploy.UpgradeResult, error)
+	Track(ctx context.Context, req deploy.TrackRequest) (*deploy.TrackResult, error)
 	Status(ctx context.Context, req deploy.StatusRequest) (*deploy.StatusResult, error)
 	StatusAll(ctx context.Context, network string) (*deploy.NetworkStatus, error)
 	ListPage(ctx context.Context, network string, limit, offset int) ([]store.Contract, error)
@@ -146,6 +147,7 @@ func (h *handlers) routes() []route {
 
 		{http.MethodPost, "/v1/deploy", ScopeWrite, h.deploy},
 		{http.MethodPost, "/v1/upgrade", ScopeWrite, h.upgrade},
+		{http.MethodPost, "/v1/track", ScopeWrite, h.track},
 
 		{http.MethodGet, "/v1/jobs/{id}", ScopeRead, h.job},
 

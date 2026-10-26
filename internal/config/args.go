@@ -33,6 +33,12 @@ import (
 //
 //   - {type: xdr, value: "AAAAAQ=="}
 //
+// A special "contract" type references another contract by its alias, which
+// resolves to that contract's tracked address on the target network. This is
+// useful for passing a token address to a pool constructor, for example:
+//
+//   - {type: address, contract: token }
+//
 // To add a type, write an encoder and register it in argTypeRegistry, then add
 // a case to the table test in args_test.go — a test asserts every registered
 // type has one. SupportedArgTypes, and therefore every "supported: ..."
@@ -40,6 +46,10 @@ import (
 type Arg struct {
 	Type  string `yaml:"type" json:"type"`
 	Value Value  `yaml:"value" json:"value"`
+
+	// ContractRef holds the alias of another contract when Type is "contract".
+	// It is resolved to the contract's tracked address at deploy time.
+	ContractRef string `yaml:"contract,omitempty" json:"contract,omitempty"`
 }
 
 // Supported Arg type names.
@@ -60,6 +70,7 @@ const (
 	ArgSymbol    = "symbol"
 	ArgBytes     = "bytes"
 	ArgAddress   = "address"
+	ArgContract  = "contract"
 	ArgVec       = "vec"
 	ArgMap       = "map"
 	ArgXDR       = "xdr"
@@ -117,6 +128,7 @@ func init() {
 		{ArgSymbol, encodeSymbol},
 		{ArgBytes, encodeBytes},
 		{ArgAddress, encodeAddress},
+		{ArgContract, encodeContractRef},
 		{ArgVec, encodeVec},
 		{ArgMap, encodeMap},
 		{ArgXDR, encodeXDR},
@@ -306,7 +318,7 @@ func encodeAddress(a Arg) (xdr.ScVal, error) {
 // index they occurred at.
 func encodeVec(a Arg) (xdr.ScVal, error) {
 	var items []Arg
-	if err := a.Value.decode(&items); err != nil {
+	if err := a.Value.Decode(&items); err != nil {
 		return xdr.ScVal{}, fmt.Errorf("vec: expected a list of args: %w", err)
 	}
 	vec := make(xdr.ScVec, 0, len(items))
@@ -327,7 +339,7 @@ func encodeVec(a Arg) (xdr.ScVal, error) {
 // encodeVec does: one registry, one set of error messages, at any depth.
 func encodeMap(a Arg) (xdr.ScVal, error) {
 	var entries []MapEntry
-	if err := a.Value.decode(&entries); err != nil {
+	if err := a.Value.Decode(&entries); err != nil {
 		return xdr.ScVal{}, fmt.Errorf("map: expected a list of {key, value} pairs: %w", err)
 	}
 	scMap := make(xdr.ScMap, 0, len(entries))
@@ -358,6 +370,13 @@ func encodeXDR(a Arg) (xdr.ScVal, error) {
 		return xdr.ScVal{}, fmt.Errorf("xdr: %q is not a valid base64 ScVal: %w", s, err)
 	}
 	return val, nil
+}
+
+// encodeContractRef is a placeholder encoder for the "contract" type.
+// Contract references must be resolved at deploy time by the deploy package,
+// which has access to the store. Calling this encoder directly is an error.
+func encodeContractRef(Arg) (xdr.ScVal, error) {
+	return xdr.ScVal{}, fmt.Errorf("contract reference must be resolved at deploy time; use deploy.ResolveContractRefs")
 }
 
 // ArgsToScVals converts a list of arguments, reporting which one failed.

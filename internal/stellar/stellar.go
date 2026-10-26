@@ -195,4 +195,11 @@ type LedgerEntry struct {
 	DataXDR string
 
 	LastModifiedLedger uint32
+
+	// LiveUntilLedgerSeq is the ledger sequence until which the entry is
+	// live. Nil for entry types that have no TTL (accounts, most config
+	// settings). Since Protocol 23 the RPC reports archived entries — whose
+	// TTL has expired — rather than omitting them, using a placeholder value
+	// of 0.
+	LiveUntilLedgerSeq *uint32
 }

@@ -63,13 +63,13 @@ func (p *Postgres) Close() error {
 func (p *Postgres) Pool() *pgxpool.Pool { return p.pool }
 
 const upsertContractSQL = `
-INSERT INTO contracts (alias, network, contract_id, current_wasm_hash)
-VALUES ($1, $2, $3, $4)
+INSERT INTO contracts (alias, network, contract_id, current_wasm_hash, untracked_at)
+VALUES ($1, $2, $3, $4, NULL)
 ON CONFLICT (network, alias) DO UPDATE
 SET contract_id       = EXCLUDED.contract_id,
     current_wasm_hash = EXCLUDED.current_wasm_hash,
     updated_at        = now()
-RETURNING id, alias, network, contract_id, current_wasm_hash, created_at, updated_at`
+RETURNING id, alias, network, contract_id, current_wasm_hash, created_at, updated_at, untracked_at`
 
 // UpsertContract implements Store.
 func (p *Postgres) UpsertContract(ctx context.Context, c Contract) (Contract, error) {
@@ -85,7 +85,7 @@ func (p *Postgres) UpsertContract(ctx context.Context, c Contract) (Contract, er
 }
 
 const getContractSQL = `
-SELECT id, alias, network, contract_id, current_wasm_hash, created_at, updated_at
+SELECT id, alias, network, contract_id, current_wasm_hash, created_at, updated_at, untracked_at
 FROM contracts
 WHERE network = $1 AND alias = $2`
 
@@ -103,9 +103,9 @@ func (p *Postgres) GetContract(ctx context.Context, network, alias string) (Cont
 }
 
 const listContractsSQL = `
-SELECT id, alias, network, contract_id, current_wasm_hash, created_at, updated_at
+SELECT id, alias, network, contract_id, current_wasm_hash, created_at, updated_at, untracked_at
 FROM contracts
-WHERE ($1 = '' OR network = $1)
+WHERE ($1 = '' OR network = $1) AND untracked_at IS NULL
 ORDER BY network, alias`
 
 const listContractsPageSQL = listContractsSQL + `
@@ -160,11 +160,11 @@ func (p *Postgres) ListContractsPage(ctx context.Context, network string, limit,
 
 const recordDeploymentSQL = `
 INSERT INTO deployments (
-    alias, network, contract_id, wasm_hash, action, deployer_pubkey, tx_hash, ledger, git_commit, dirty, fee_charged, notes, ci_run_url, fn_name, fn_args, constructor_args
+    alias, network, contract_id, wasm_hash, action, deployer_pubkey, actor, tx_hash, ledger, git_commit, dirty, fee_charged, notes, ci_run_url, fn_name, fn_args, constructor_args
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 RETURNING id, alias, network, contract_id, wasm_hash, action,
-		deployer_pubkey, tx_hash, ledger, git_commit, dirty, fee_charged, notes, ci_run_url, fn_name, fn_args, constructor_args, created_at`
+		deployer_pubkey, actor, tx_hash, ledger, git_commit, dirty, fee_charged, notes, ci_run_url, fn_name, fn_args, constructor_args, created_at`
 
 // RecordDeployment implements Store.
 func (p *Postgres) RecordDeployment(ctx context.Context, d Deployment) (Deployment, error) {
@@ -218,9 +218,14 @@ func (p *Postgres) RecordDeployment(ctx context.Context, d Deployment) (Deployme
 		fnArgs = &d.FnArgs
 	}
 
+	actor := d.Actor
+	if actor == "" {
+		actor = "cli"
+	}
+
 	row := p.pool.QueryRow(ctx, recordDeploymentSQL,
 		d.Alias, d.Network, d.ContractID, d.WasmHash, string(d.Action),
-		d.DeployerPubkey, txHash, ledger, gitCommit, dirty, feeCharged, notes, ciRunURL, fnName, fnArgs, constructorArgs)
+		d.DeployerPubkey, actor, txHash, ledger, gitCommit, dirty, feeCharged, notes, ciRunURL, fnName, fnArgs, constructorArgs)
 
 	out, err := scanDeployment(row)
 	if err != nil {
@@ -231,7 +236,7 @@ func (p *Postgres) RecordDeployment(ctx context.Context, d Deployment) (Deployme
 
 const historySQL = `
 SELECT id, alias, network, contract_id, wasm_hash, action,
-	deployer_pubkey, tx_hash, ledger, git_commit, dirty, fee_charged, notes, ci_run_url, fn_name, fn_args, constructor_args, created_at
+	deployer_pubkey, actor, tx_hash, ledger, git_commit, dirty, fee_charged, notes, ci_run_url, fn_name, fn_args, constructor_args, created_at
 FROM deployments
 WHERE network = $1 AND alias = $2
 ORDER BY created_at DESC, id DESC`
@@ -267,7 +272,7 @@ func (p *Postgres) History(ctx context.Context, network, alias string) ([]Deploy
 
 const getDeploymentSQL = `
 SELECT id, alias, network, contract_id, wasm_hash, action,
-	deployer_pubkey, tx_hash, ledger, git_commit, dirty, fee_charged, notes, ci_run_url, fn_name, fn_args, constructor_args, created_at
+	deployer_pubkey, actor, tx_hash, ledger, git_commit, dirty, fee_charged, notes, ci_run_url, fn_name, fn_args, constructor_args, created_at
 FROM deployments
 WHERE id = $1`
 
@@ -311,7 +316,7 @@ func (p *Postgres) HistoryPage(ctx context.Context, network, alias string, limit
 
 const listAllDeploymentsSQL = `
 SELECT id, alias, network, contract_id, wasm_hash, action,
-	deployer_pubkey, tx_hash, ledger, git_commit, dirty, fee_charged, notes, ci_run_url, fn_name, fn_args, constructor_args, created_at
+	deployer_pubkey, actor, tx_hash, ledger, git_commit, dirty, fee_charged, notes, ci_run_url, fn_name, fn_args, constructor_args, created_at
 FROM deployments
 ORDER BY id`
 
@@ -389,6 +394,25 @@ func (p *Postgres) Attempts(ctx context.Context, network, alias string) ([]Attem
 	return out, nil
 }
 
+// CountAttemptsBefore implements Store.
+func (p *Postgres) CountAttemptsBefore(ctx context.Context, before time.Time) (int, error) {
+	var count int
+	if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM deployment_attempts WHERE created_at < $1`, before).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count old attempts: %w", err)
+	}
+	return count, nil
+}
+
+// PruneAttempts implements Store. Deployment history lives in another table
+// and is not touched by this deletion.
+func (p *Postgres) PruneAttempts(ctx context.Context, before time.Time) (int, error) {
+	tag, err := p.pool.Exec(ctx, `DELETE FROM deployment_attempts WHERE created_at < $1`, before)
+	if err != nil {
+		return 0, fmt.Errorf("prune old attempts: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // importSnapshot implements snapshotImporter for Postgres.
 //
 // The identity columns are GENERATED ALWAYS, so inserting recorded ids needs
@@ -427,14 +451,18 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		if d.GitCommit != "" {
 			dirty = &d.Dirty
 		}
+		actor := d.Actor
+		if actor == "" {
+			actor = "cli"
+		}
 		if _, err := tx.Exec(ctx, `
 INSERT INTO deployments (id, alias, network, contract_id, wasm_hash, action,
-                         deployer_pubkey, tx_hash, ledger, git_commit, dirty, fee_charged,
+                         deployer_pubkey, actor, tx_hash, ledger, git_commit, dirty, fee_charged,
                          notes, ci_run_url, fn_name, fn_args, constructor_args, created_at)
 OVERRIDING SYSTEM VALUE
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
 			d.ID, d.Alias, d.Network, d.ContractID, d.WasmHash, string(d.Action),
-			d.DeployerPubkey, txHash, ledger, optionalText(d.GitCommit), dirty, d.FeeCharged,
+			d.DeployerPubkey, actor, txHash, ledger, optionalText(d.GitCommit), dirty, d.FeeCharged,
 			optionalText(d.Notes), optionalText(d.CIRunURL), optionalText(d.FnName), optionalText(d.FnArgs), optionalText(d.ConstructorArgs), d.CreatedAt); err != nil {
 			return fmt.Errorf("postgres import deployment %d: %w", d.ID, err)
 		}
@@ -476,8 +504,13 @@ type scanner interface {
 
 func scanContract(s scanner) (Contract, error) {
 	var c Contract
-	err := s.Scan(&c.ID, &c.Alias, &c.Network, &c.ContractID, &c.CurrentWasmHash, &c.CreatedAt, &c.UpdatedAt)
-	return c, err
+	var untrackedAt *time.Time
+	err := s.Scan(&c.ID, &c.Alias, &c.Network, &c.ContractID, &c.CurrentWasmHash, &c.CreatedAt, &c.UpdatedAt, &untrackedAt)
+	if err != nil {
+		return Contract{}, err
+	}
+	c.UntrackedAt = untrackedAt
+	return c, nil
 }
 
 func scanDeployment(s scanner) (Deployment, error) {
@@ -494,14 +527,18 @@ func scanDeployment(s scanner) (Deployment, error) {
 		fnName          *string
 		fnArgs          *string
 		constructorArgs *string
+		actor           *string
 	)
 	err := s.Scan(&d.ID, &d.Alias, &d.Network, &d.ContractID, &d.WasmHash, &action,
-		&d.DeployerPubkey, &txHash, &ledger, &txGitCommit, &txDirty, &txFee, &notes, &ciRunURL, &fnName, &fnArgs, &constructorArgs, &d.CreatedAt)
+		&d.DeployerPubkey, &actor, &txHash, &ledger, &txGitCommit, &txDirty, &txFee, &notes, &ciRunURL, &fnName, &fnArgs, &constructorArgs, &d.CreatedAt)
 	if err != nil {
 		return Deployment{}, err
 	}
 
 	d.Action = Action(action)
+	if actor != nil {
+		d.Actor = *actor
+	}
 	if txHash != nil {
 		d.TxHash = *txHash
 	}
@@ -552,4 +589,58 @@ func scanAttempt(s scanner) (Attempt, error) {
 		a.TxHash = *txHash
 	}
 	return a, nil
+}
+
+// RenameContract renames a tracked contract's alias and all its history atomically.
+func (p *Postgres) RenameContract(ctx context.Context, network, oldAlias, newAlias string) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("rename contract: begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Check if new alias already exists.
+	var exists bool
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM contracts WHERE network = $1 AND alias = $2)`, network, newAlias).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("rename contract: check new alias exists: %w", err)
+	}
+	if exists {
+		return fmt.Errorf("rename contract: alias %q already exists on %s", newAlias, network)
+	}
+
+	// Update contracts table.
+	cmd, err := tx.Exec(ctx, `UPDATE contracts SET alias = $1, updated_at = now() WHERE network = $2 AND alias = $3`, newAlias, network, oldAlias)
+	if err != nil {
+		return fmt.Errorf("rename contract: update contracts: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("rename contract: %w", ErrNotFound)
+	}
+
+	// Update deployments table.
+	_, err = tx.Exec(ctx, `UPDATE deployments SET alias = $1 WHERE network = $2 AND alias = $3`, newAlias, network, oldAlias)
+	if err != nil {
+		return fmt.Errorf("rename contract: update deployments: %w", err)
+	}
+
+	// Update deployment_attempts table.
+	_, err = tx.Exec(ctx, `UPDATE deployment_attempts SET alias = $1 WHERE network = $2 AND alias = $3`, newAlias, network, oldAlias)
+	if err != nil {
+		return fmt.Errorf("rename contract: update deployment_attempts: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}
+
+// UntrackContract stops tracking a contract while keeping its history readable.
+func (p *Postgres) UntrackContract(ctx context.Context, network, alias string) error {
+	cmd, err := p.pool.Exec(ctx, `UPDATE contracts SET untracked_at = now() WHERE network = $1 AND alias = $2`, network, alias)
+	if err != nil {
+		return fmt.Errorf("untrack contract: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("untrack contract: %w", ErrNotFound)
+	}
+	return nil
 }

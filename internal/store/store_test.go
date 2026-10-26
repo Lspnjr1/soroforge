@@ -168,11 +168,11 @@ func runStoreSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 		for _, d := range []store.Deployment{
 			{
 				Alias: "counter", Network: "testnet", ContractID: "C1", WasmHash: "v1",
-				Action: store.ActionDeploy, DeployerPubkey: "GABC", TxHash: "tx1", Ledger: 100,
+				Action: store.ActionDeploy, DeployerPubkey: "GABC", Actor: "cli", TxHash: "tx1", Ledger: 100,
 			},
 			{
 				Alias: "counter", Network: "testnet", ContractID: "C1", WasmHash: "v2",
-				Action: store.ActionUpgrade, DeployerPubkey: "GABC", TxHash: "tx2", Ledger: 200,
+				Action: store.ActionUpgrade, DeployerPubkey: "GABC", Actor: "cli", TxHash: "tx2", Ledger: 200,
 				Notes: "fix rounding",
 			},
 		} {
@@ -198,17 +198,17 @@ func runStoreSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 
 		_, err := s.RecordDeployment(ctx, store.Deployment{
 			Alias: "counter", Network: "testnet", ContractID: "C1", WasmHash: "a",
-			Action: store.ActionDeploy, DeployerPubkey: "GABC",
+			Action: store.ActionDeploy, DeployerPubkey: "GABC", Actor: "cli",
 		})
 		require.NoError(t, err)
 		_, err = s.RecordDeployment(ctx, store.Deployment{
 			Alias: "counter", Network: "mainnet", ContractID: "C2", WasmHash: "b",
-			Action: store.ActionDeploy, DeployerPubkey: "GABC",
+			Action: store.ActionDeploy, DeployerPubkey: "GABC", Actor: "cli",
 		})
 		require.NoError(t, err)
 		_, err = s.RecordDeployment(ctx, store.Deployment{
 			Alias: "token", Network: "testnet", ContractID: "C3", WasmHash: "c",
-			Action: store.ActionDeploy, DeployerPubkey: "GABC",
+			Action: store.ActionDeploy, DeployerPubkey: "GABC", Actor: "cli",
 		})
 		require.NoError(t, err)
 
@@ -231,7 +231,7 @@ func runStoreSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 
 		rec, err := s.RecordDeployment(ctx, store.Deployment{
 			Alias: "counter", Network: "testnet", ContractID: "C1", WasmHash: "v1",
-			Action: store.ActionDeploy, DeployerPubkey: "GABC", TxHash: "tx1", Ledger: 100,
+			Action: store.ActionDeploy, DeployerPubkey: "GABC", Actor: "cli", TxHash: "tx1", Ledger: 100,
 		})
 		require.NoError(t, err)
 
@@ -252,7 +252,7 @@ func runStoreSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 		for _, hash := range []string{"v1", "v2", "v3"} {
 			_, err := s.RecordDeployment(ctx, store.Deployment{
 				Alias: "counter", Network: "testnet", ContractID: "C1", WasmHash: hash,
-				Action: store.ActionDeploy, DeployerPubkey: "GABC",
+				Action: store.ActionDeploy, DeployerPubkey: "GABC", Actor: "cli",
 			})
 			require.NoError(t, err)
 		}
@@ -276,7 +276,7 @@ func runStoreSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 
 		_, err := s.RecordDeployment(ctx, store.Deployment{
 			Alias: "counter", Network: "testnet", ContractID: "C1", WasmHash: "a",
-			Action: store.ActionDeploy, DeployerPubkey: "GABC",
+			Action: store.ActionDeploy, DeployerPubkey: "GABC", Actor: "cli",
 		})
 		require.NoError(t, err)
 
@@ -300,7 +300,7 @@ func runStoreSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 
 		_, err := s.RecordDeployment(ctx, store.Deployment{
 			Alias: "counter", Network: "testnet", ContractID: "C1", WasmHash: "a",
-			Action: store.ActionDeploy, DeployerPubkey: "GABC",
+			Action: store.ActionDeploy, DeployerPubkey: "GABC", Actor: "cli",
 			ConstructorArgs: args,
 		})
 		require.NoError(t, err)
@@ -319,7 +319,7 @@ func runStoreSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 
 		_, err := s.RecordDeployment(ctx, store.Deployment{
 			Alias: "counter", Network: "testnet", WasmHash: "c0ffee",
-			Action: store.ActionUpload, DeployerPubkey: "GABC",
+			Action: store.ActionUpload, DeployerPubkey: "GABC", Actor: "cli",
 			TxHash: "tx-upload", Ledger: 300,
 		})
 		require.NoError(t, err)
@@ -341,12 +341,12 @@ func runStoreSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 
 		_, err := s.RecordDeployment(ctx, store.Deployment{
 			Alias: "old", Network: "testnet", ContractID: "C1", WasmHash: "a",
-			Action: store.ActionDeploy, DeployerPubkey: "GABC",
+			Action: store.ActionDeploy, DeployerPubkey: "GABC", Actor: "cli",
 		})
 		require.NoError(t, err)
 		_, err = s.RecordDeployment(ctx, store.Deployment{
 			Alias: "counter", Network: "mainnet", WasmHash: "b",
-			Action: store.ActionUpload, DeployerPubkey: "GXYZ",
+			Action: store.ActionUpload, DeployerPubkey: "GXYZ", Actor: "cli",
 		})
 		require.NoError(t, err)
 
@@ -373,7 +373,7 @@ func runStoreSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 		fee := int64(123456)
 		_, err := s.RecordDeployment(ctx, store.Deployment{
 			Alias: "counter", Network: "testnet", ContractID: "C1", WasmHash: "a",
-			Action: store.ActionDeploy, DeployerPubkey: "GABC", GitCommit: "abc123", Dirty: true,
+			Action: store.ActionDeploy, DeployerPubkey: "GABC", Actor: "cli", GitCommit: "abc123", Dirty: true,
 			FeeCharged: &fee,
 		})
 		require.NoError(t, err)
@@ -397,6 +397,7 @@ func runStoreSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 			WasmHash:       "hash1",
 			Action:         store.ActionInvoke,
 			DeployerPubkey: "GABC",
+			Actor:          "cli",
 			CIRunURL:       "https://github.com/soroworks/soroforge/actions/runs/12345",
 			FnName:         "increment",
 			FnArgs:         "u32:5",
@@ -420,7 +421,7 @@ func runStoreSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 
 		_, err := s.RecordDeployment(ctx, store.Deployment{
 			Alias: "counter", Network: "testnet", ContractID: "C1", WasmHash: "a",
-			Action: "sideways", DeployerPubkey: "GABC",
+			Action: "sideways", DeployerPubkey: "GABC", Actor: "cli",
 		})
 		assert.ErrorContains(t, err, "action")
 
@@ -456,7 +457,7 @@ func runStoreSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 		// A deployment of the same contract must not mix with the failures.
 		_, err = s.RecordDeployment(ctx, store.Deployment{
 			Alias: "flaky", Network: "testnet", ContractID: "CFLAKY", WasmHash: "a",
-			Action: store.ActionDeploy, DeployerPubkey: "GABC",
+			Action: store.ActionDeploy, DeployerPubkey: "GABC", Actor: "cli",
 		})
 		require.NoError(t, err)
 
@@ -481,6 +482,42 @@ func runStoreSuite(t *testing.T, newStore func(t *testing.T) store.Store) {
 		otherNet, err := s.Attempts(ctx, "futurenet", "flaky")
 		require.NoError(t, err)
 		assert.Empty(t, otherNet, "attempts are scoped per network like everything else")
+	})
+
+	t.Run("pruning removes only attempts older than the cutoff", func(t *testing.T) {
+		s := newStore(t)
+		_, err := s.RecordAttempt(ctx, store.Attempt{
+			Alias: "flaky", Network: "testnet", Action: store.ActionDeploy,
+			Stage: store.AttemptSubmit, Error: "old failure",
+		})
+		require.NoError(t, err)
+		cutoff := time.Now().Add(20 * time.Millisecond)
+		time.Sleep(30 * time.Millisecond)
+		_, err = s.RecordAttempt(ctx, store.Attempt{
+			Alias: "flaky", Network: "testnet", Action: store.ActionUpgrade,
+			Stage: store.AttemptSubmit, Error: "new failure",
+		})
+		require.NoError(t, err)
+		_, err = s.RecordDeployment(ctx, store.Deployment{
+			Alias: "flaky", Network: "testnet", ContractID: "CFLAKY", WasmHash: "a",
+			Action: store.ActionDeploy, DeployerPubkey: "GABC", Actor: "cli",
+		})
+		require.NoError(t, err)
+
+		count, err := s.CountAttemptsBefore(ctx, cutoff)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+		removed, err := s.PruneAttempts(ctx, cutoff)
+		require.NoError(t, err)
+		assert.Equal(t, 1, removed)
+
+		attempts, err := s.Attempts(ctx, "testnet", "flaky")
+		require.NoError(t, err)
+		require.Len(t, attempts, 1)
+		assert.Equal(t, "new failure", attempts[0].Error)
+		history, err := s.History(ctx, "testnet", "flaky")
+		require.NoError(t, err)
+		require.Len(t, history, 1, "pruning attempts must not delete confirmed deployments")
 	})
 
 	t.Run("attempt error text never keeps key material", func(t *testing.T) {
@@ -556,7 +593,7 @@ func TestMemoryStoreHistoryOrdersByIDWhenTimestampsTie(t *testing.T) {
 		}
 		_, err := s.RecordDeployment(ctx, store.Deployment{
 			Alias: "counter", Network: "testnet", ContractID: "C1", WasmHash: hash,
-			Action: action, DeployerPubkey: "GABC",
+			Action: action, DeployerPubkey: "GABC", Actor: "cli",
 		})
 		require.NoError(t, err)
 	}
@@ -572,6 +609,8 @@ func TestActionValid(t *testing.T) {
 	assert.True(t, store.ActionDeploy.Valid())
 	assert.True(t, store.ActionUpgrade.Valid())
 	assert.True(t, store.ActionUpload.Valid())
+	assert.True(t, store.ActionExtend.Valid())
+	assert.True(t, store.ActionRestore.Valid())
 	assert.True(t, store.ActionInvoke.Valid())
 	assert.False(t, store.Action("rollback").Valid())
 	assert.False(t, store.Action("").Valid())
@@ -580,7 +619,7 @@ func TestActionValid(t *testing.T) {
 func TestDeploymentValidate(t *testing.T) {
 	valid := store.Deployment{
 		Alias: "counter", Network: "testnet", ContractID: "C1", WasmHash: "a",
-		Action: store.ActionDeploy, DeployerPubkey: "GABC",
+		Action: store.ActionDeploy, DeployerPubkey: "GABC", Actor: "cli",
 	}
 	require.NoError(t, valid.Validate())
 

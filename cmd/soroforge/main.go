@@ -17,6 +17,10 @@ func main() {
 		if errors.As(err, &drift) {
 			os.Exit(exitCodeDrift)
 		}
+		var unavailable *unavailableError
+		if errors.As(err, &unavailable) {
+			os.Exit(exitCodeUnavailable)
+		}
 		os.Exit(1)
 	}
 }
@@ -25,6 +29,11 @@ const (
 	// exitCodeDrift is returned by `soroforge status` when a contract does not
 	// match its recorded state.
 	exitCodeDrift = 2
+
+	// exitCodeUnavailable is returned by `soroforge verify` when there is
+	// nothing on-chain to compare against: the contract is not tracked on the
+	// network, or has no instance.
+	exitCodeUnavailable = 3
 )
 
 // driftError signals that a status check completed and found a mismatch. It is
@@ -34,3 +43,11 @@ type driftError struct {
 }
 
 func (e *driftError) Error() string { return e.detail }
+
+// unavailableError signals that a verify check completed but found no
+// deployed contract to compare with.
+type unavailableError struct {
+	detail string
+}
+
+func (e *unavailableError) Error() string { return e.detail }

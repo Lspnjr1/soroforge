@@ -9,6 +9,10 @@
 // own; "counter on testnet" and "counter on mainnet" are separate records with
 // separate lifecycles, and no query in this package crosses that boundary
 // implicitly.
+//
+// The history is append-only: every on-chain change to a tracked contract —
+// deploy, upgrade, upload, TTL extension, or restore — is a row, and the rows
+// for one contract are its lifecycle log.
 package store
 
 import (
@@ -41,27 +45,42 @@ const (
 	// function. No contract exists yet, so the record has no contract id.
 	ActionUpload Action = "upload"
 
+	// ActionExtend renews a contract's instance and code TTLs without
+	// touching its bytecode.
+	ActionExtend Action = "extend"
+
+	// ActionRestore brings a contract's archived entries back to the live
+	// ledger without changing its bytecode.
+	ActionRestore Action = "restore"
+
 	// ActionInvoke is an administrative function call against a deployed contract.
 	ActionInvoke Action = "invoke"
+
+	// ActionTrack records the adoption of a contract that was deployed outside
+	// SoroForge. It reads the live WASM hash from the ledger and creates a
+	// history entry so that status, upgrade, and history work for the contract.
+	ActionTrack Action = "track"
 )
 
 // Valid reports whether a is a recognised action. The database enforces this
 // too; checking here produces a better error than a constraint violation.
 func (a Action) Valid() bool {
-	return a == ActionDeploy || a == ActionUpgrade || a == ActionUpload || a == ActionInvoke
+	return a == ActionDeploy || a == ActionUpgrade || a == ActionUpload ||
+		a == ActionInvoke || a == ActionTrack || a == ActionExtend || a == ActionRestore
 }
 
 func (a Action) String() string { return string(a) }
 
 // Contract is the current tracked state of one contract on one network.
 type Contract struct {
-	ID              int64     `json:"-"`
-	Alias           string    `json:"alias"`
-	Network         string    `json:"network"`
-	ContractID      string    `json:"contract_id"`
-	CurrentWasmHash string    `json:"current_wasm_hash"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID              int64      `json:"-"`
+	Alias           string     `json:"alias"`
+	Network         string     `json:"network"`
+	ContractID      string     `json:"contract_id"`
+	CurrentWasmHash string     `json:"current_wasm_hash"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	UntrackedAt     *time.Time `json:"untracked_at,omitempty"`
 }
 
 // Deployment is one entry in the append-only history.
@@ -80,6 +99,11 @@ type Deployment struct {
 	// DeployerPubkey is the G... address that signed. Only the public address
 	// is ever stored — never the seed that produced it.
 	DeployerPubkey string `json:"deployer_pubkey"`
+
+	// Actor is the identity that triggered the deployment. For CLI invocations
+	// this is "cli". For API calls it is the token's name (never the value),
+	// so an audit trail can distinguish "the CI token" from "the dashboard token".
+	Actor string `json:"actor"`
 
 	// TxHash and Ledger locate the change on-chain so a record can be audited
 	// independently of SoroForge.
@@ -183,8 +207,8 @@ func (a Attempt) Validate() error {
 	case a.Network == "":
 		return fmt.Errorf("attempt: network is required")
 	case !a.Action.Valid():
-		return fmt.Errorf("attempt: action must be %q, %q, %q, or %q, got %q",
-			ActionDeploy, ActionUpgrade, ActionUpload, ActionInvoke, a.Action)
+		return fmt.Errorf("attempt: action must be %q, %q, %q, %q, or %q, got %q",
+			ActionDeploy, ActionUpgrade, ActionUpload, ActionInvoke, ActionTrack, a.Action)
 	case !a.Stage.Valid():
 		return fmt.Errorf("attempt: stage must be %q, %q, or %q, got %q",
 			AttemptSimulate, AttemptSubmit, AttemptConfirm, a.Stage)
@@ -257,6 +281,23 @@ type Store interface {
 	// Attempts returns a contract's failed attempts, newest first.
 	Attempts(ctx context.Context, network, alias string) ([]Attempt, error)
 
+	// CountAttemptsBefore returns the number of failed attempts older than before.
+	CountAttemptsBefore(ctx context.Context, before time.Time) (int, error)
+
+	// PruneAttempts deletes failed attempts older than before. Confirmed
+	// deployments are stored separately and are never affected.
+	PruneAttempts(ctx context.Context, before time.Time) (int, error)
+
+	// RenameContract renames a tracked contract's alias and all its history
+	// atomically. Returns ErrNotFound if the contract is not tracked on that
+	// network, or an error if the new alias already exists.
+	RenameContract(ctx context.Context, network, oldAlias, newAlias string) error
+
+	// UntrackContract stops tracking a contract while keeping its history
+	// readable. Returns ErrNotFound if the contract is not tracked on that
+	// network.
+	UntrackContract(ctx context.Context, network, alias string) error
+
 	// Close releases resources held by the store.
 	Close() error
 }
@@ -294,16 +335,18 @@ func (d Deployment) Validate() error {
 	case d.Network == "":
 		return fmt.Errorf("deployment: network is required")
 	// An upload installs bytecode, which is content-addressed by its wasm hash
-	// and has no contract address; only a deploy or upgrade names a contract.
+	// and has no contract address; only a deploy, upgrade, or track names a contract.
 	case d.ContractID == "" && d.Action != ActionUpload:
 		return fmt.Errorf("deployment: contract_id is required")
 	case d.WasmHash == "":
 		return fmt.Errorf("deployment: wasm_hash is required")
 	case !d.Action.Valid():
-		return fmt.Errorf("deployment: action must be %q, %q, %q, or %q, got %q",
-			ActionDeploy, ActionUpgrade, ActionUpload, ActionInvoke, d.Action)
+		return fmt.Errorf("deployment: action must be %q, %q, %q, %q, %q, %q, or %q, got %q",
+			ActionDeploy, ActionUpgrade, ActionUpload, ActionInvoke, ActionTrack, ActionExtend, ActionRestore, d.Action)
 	case d.DeployerPubkey == "":
 		return fmt.Errorf("deployment: deployer_pubkey is required")
+	case d.Actor == "":
+		return fmt.Errorf("deployment: actor is required")
 	}
 	return nil
 }

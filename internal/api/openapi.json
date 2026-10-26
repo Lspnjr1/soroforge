@@ -85,6 +85,22 @@
         }
       }
     },
+    "/v1/track": {
+      "post": {
+        "operationId": "track",
+        "summary": "Adopt a contract deployed elsewhere into SoroForge tracking",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TrackRequest" } } } },
+        "responses": {
+          "201": { "description": "Contract tracked", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TrackResult" } } } },
+          "200": { "description": "Dry run completed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TrackResult" } } } },
+          "400": { "$ref": "#/components/responses/ClientError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "description": "Bearer token lacks write scope", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
     "/v1/jobs/{id}": {
       "get": {
         "operationId": "getJob",
@@ -218,6 +234,17 @@
           "git_commit": { "type": "string", "description": "Optional source commit override, useful in detached CI checkouts." }
         }
       },
+      "TrackRequest": {
+        "type": "object", "required": ["alias", "contract_id"], "additionalProperties": false,
+        "properties": {
+          "alias": { "type": "string" },
+          "network": { "type": "string" },
+          "contract_id": { "type": "string" },
+          "notes": { "type": "string" },
+          "dry_run": { "type": "boolean", "default": false },
+          "git_commit": { "type": "string", "description": "Optional source commit override, useful in detached CI checkouts." }
+        }
+      },
       "Contract": {
         "type": "object", "required": ["alias", "network", "contract_id", "current_wasm_hash", "created_at", "updated_at"],
         "properties": {
@@ -231,7 +258,7 @@
         "properties": {
           "id": { "type": "integer", "format": "int64" }, "alias": { "type": "string" },
           "network": { "type": "string" }, "contract_id": { "type": "string" }, "wasm_hash": { "type": "string" },
-          "action": { "type": "string", "enum": ["deploy", "upgrade", "upload"] }, "deployer_pubkey": { "type": "string" },
+          "action": { "type": "string", "enum": ["deploy", "upgrade", "upload", "invoke", "track"] }, "deployer_pubkey": { "type": "string" },
           "tx_hash": { "type": "string" }, "ledger": { "type": "integer", "format": "int64" },
           "git_commit": { "type": "string" }, "dirty": { "type": "boolean" },
           "fee_charged": { "type": ["integer", "null"], "format": "int64", "description": "Confirmed transaction fee in stroops." },
@@ -276,6 +303,12 @@
         "upgrade_envelope_xdr": { "type": "string" }, "upload_skipped": { "type": "boolean" }, "no_change": { "type": "boolean" },
         "deployment": { "$ref": "#/components/schemas/Deployment" }, "catalog": { "$ref": "#/components/schemas/CatalogStatus" }
       } },
+      "TrackResult": { "type": "object", "properties": {
+        "alias": { "type": "string" }, "network": { "type": "string" }, "contract_id": { "type": "string" },
+        "wasm_hash": { "type": "string" }, "deployer_pubkey": { "type": "string" }, "ledger": { "type": "integer" },
+        "dry_run": { "type": "boolean" }, "deployment": { "$ref": "#/components/schemas/Deployment" },
+        "catalog": { "$ref": "#/components/schemas/CatalogStatus" }
+      } },
       "CatalogStatus": { "type": "object", "required": ["registry", "ok"], "properties": {
         "registry": { "type": "string" }, "ok": { "type": "boolean" }, "error": { "type": "string" },
         "entry": { "type": "object", "required": ["url", "created", "changed", "functions"], "properties": {
@@ -310,8 +343,8 @@
       "ReadinessStatus": { "type": "object", "required": ["ready", "dependencies"], "properties": {
         "ready": { "type": "boolean" }, "dependencies": { "type": "array", "items": { "type": "object", "required": ["name", "ok"], "properties": {
           "name": { "type": "string" }, "ok": { "type": "boolean" }, "error": { "type": "string" }
-        } } }
-      } }
+        } } } }
+      }
     }
   }
 }
