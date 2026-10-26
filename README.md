@@ -276,6 +276,7 @@ so a typo is a loud error rather than a silently ignored setting.
 ```yaml
 version: 1                  # schema version; only 1 exists
 default_network: testnet    # used when --network is omitted
+build: stellar contract build   # optional; run by `soroforge build` and `--build`
 
 networks:
   testnet:
@@ -292,6 +293,7 @@ networks:
 contracts:
   counter:
     wasm: ./target/wasm32-unknown-unknown/release/counter.wasm
+    build: make counter     # optional; overrides the top-level build
     constructor_args: []    # optional
     upgrade_fn: upgrade     # optional, defaults to "upgrade"
     salt: ""                # optional 32-byte hex
@@ -386,6 +388,37 @@ a timeout: a failing webhook never fails the deploy. Dry runs never trigger webh
 
 **Contracts.** `wasm` paths resolve against the config file's directory, not your
 shell's working directory, so `soroforge deploy` behaves the same from anywhere.
+
+**`build`** is the command that produces a contract's `wasm` artifact, set
+once at the top level (for a workspace built in one step) or per contract,
+where it overrides the top-level one. It is never run implicitly: only
+`soroforge build [alias]`, `deploy --build` and `upgrade --build` run it.
+
+```yaml
+build: stellar contract build        # every contract, unless it sets its own
+contracts:
+  token:
+    wasm: ./token/target/wasm32v1-none/release/token.wasm
+    build: "make -C token wasm"      # this contract only
+```
+
+- The command runs in the config file's directory, like `wasm` paths resolve.
+- It is executed directly, **not through a shell**. Single and double quotes
+  group arguments and a backslash escapes one character, but `$VARIABLES`,
+  globs, `|`, `&&`, `;` and redirections are not interpreted — an unquoted
+  operator is a load error rather than a confusing argument. To use a shell,
+  say so where a reviewer can see it:
+  `build: sh -c 'cargo build --release && stellar contract optimize ...'`.
+- Contracts that share a command (the top-level one) run it once per build.
+- Its stdout and stderr stream to SoroForge's stderr, so `--json` output stays
+  clean; stdin is not connected, so a build that prompts fails instead of
+  hanging CI.
+- A failing build — non-zero exit, a missing program, or no artifact at the
+  `wasm` path afterwards — stops `deploy --build` and `upgrade --build` before
+  anything is uploaded, submitted or recorded, so a stale artifact is never
+  published. Without `--build` they deploy whatever is on disk, as before.
+- `asset:` contracts have no artifact and cannot set `build`. The HTTP API
+  never builds: it deploys the artifact already on the server's disk.
 
 **`salt`** makes a contract's address reproducible: addresses derive from
 (deployer address, salt). Leave it unset and each deploy uses a random salt, so
@@ -571,9 +604,10 @@ of an error printed mid-prompt.
 | `init` | Write a starter `soroforge.yaml` for the contracts built under `target/`. |
 | `config show` | Print the resolved configuration (networks, contracts, environment); secrets stay `(set)`/`(unset)`. |
 | `config check` | Check config and WASM files; `--offline` skips RPC checks. |
-| `deploy <alias>` | Upload WASM, instantiate the contract, record it. `--arg`/`--args-file` override `constructor_args` for this run. |
+| `build [alias]` | Run the configured `build` command and print the resulting WASM hash; no alias builds every contract that has one. |
+| `deploy <alias>` | Upload WASM, instantiate the contract, record it. `--arg`/`--args-file` override `constructor_args` for this run; `--build` runs the configured build first and aborts if it fails. |
 | `deploy --all` | Deploy every configured contract not yet tracked on the network, in alias order. |
-| `upgrade <alias>` | Upload new WASM and invoke the contract's upgrade entrypoint. |
+| `upgrade <alias>` | Upload new WASM and invoke the contract's upgrade entrypoint; `--build` builds first, as for `deploy`. |
 | `upload <alias>` | Install WASM on-chain without deploying or upgrading; prints the hash for a governance proposal. |
 | `extend <alias>` | Renew a contract's instance and code TTLs before they lapse. |
 | `restore <alias>` | Restore a contract whose entries were archived, keeping its address. |

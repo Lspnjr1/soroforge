@@ -12,6 +12,12 @@ version: 1
 # cannot land on the wrong network because of an implicit default.
 default_network: testnet
 
+# Optional: the command that builds the contracts' WASM. It runs only when
+# asked — `soroforge build`, or deploy/upgrade with --build — in this file's
+# directory, and without a shell (write `sh -c '...'` to use one). A contract
+# can set its own `build:` to override it.
+# build: stellar contract build
+
 networks:
   testnet:
     rpc_url: https://soroban-testnet.stellar.org

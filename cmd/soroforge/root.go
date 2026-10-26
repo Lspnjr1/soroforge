@@ -75,6 +75,7 @@ the README security notes.`,
 	cmd.AddCommand(
 		newInitCmd(),
 		newConfigCmd(),
+		newBuildCmd(),
 		newDeployCmd(),
 		newUpgradeCmd(),
 		newUploadCmd(),

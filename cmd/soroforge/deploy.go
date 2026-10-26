@@ -22,6 +22,7 @@ func newDeployCmd() *cobra.Command {
 		argsFile       string
 		progress       bool
 		extendTTL      bool
+		buildFirst     bool
 		confirmTimeout time.Duration
 	)
 
@@ -55,6 +56,11 @@ it. --dry-run works with --all.
 Progress is written to stderr while waiting for confirmation, and only when
 stderr is a terminal, so stdout and --json stay clean. Use --progress to force
 it on in a pipe or log.
+
+--build runs the build command configured in soroforge.yaml first (see
+'soroforge build') and stops, with nothing submitted, if it fails. With --all
+it builds every contract that has a build command. Without --build nothing is
+ever built: the WASM already on disk is deployed.
 
 On a network marked protected: true in soroforge.yaml, a real deploy prints
 what will happen and requires you to type the network name. --yes skips the
@@ -91,6 +97,13 @@ refuses rather than hanging. --dry-run never prompts.`,
 			target := "every untracked contract"
 			if !all {
 				target = args[0]
+			}
+			// Build before the confirmation prompt, so the operator confirms
+			// an artifact that exists rather than one that might still fail.
+			if buildFirst {
+				if err := buildBefore(cmd, a.cfg, "deploy", args); err != nil {
+					return err
+				}
 			}
 			if err := confirmProtected(cmd.ErrOrStderr(), os.Stdin, stdinIsTerminal(),
 				networkName, network, "deploy", target, yes, dryRun); err != nil {
@@ -159,6 +172,8 @@ refuses rather than hanging. --dry-run never prompts.`,
 		"assemble and simulate without submitting or recording anything")
 	cmd.Flags().BoolVar(&extendTTL, "extend-ttl", false,
 		"after confirming, extend the new contract's TTLs to the network's maximum")
+	cmd.Flags().BoolVar(&buildFirst, "build", false,
+		"run the configured build command first and abort if it fails")
 	cmd.Flags().BoolVar(&yes, "yes", false,
 		"skip the typed confirmation on protected networks (for CI)")
 	cmd.Flags().StringVar(&notes, "notes", "",

@@ -55,6 +55,10 @@ type resolvedContract struct {
 	// Salt is omitted when unset: an absent salt means a random one per
 	// deploy, which `config show` reports by omission.
 	Salt string `json:"salt,omitempty"`
+
+	// Build is the command `soroforge build` would run for this contract —
+	// its own or the top-level one — omitted when there is none.
+	Build string `json:"build,omitempty"`
 }
 
 func newConfigShowCmd() *cobra.Command {
@@ -103,6 +107,7 @@ func buildResolvedConfig(cfg *config.Config) resolvedConfig {
 			ResolvedWasm: cfg.WasmPath(contract),
 			UpgradeFunc:  contract.UpgradeFuncOrDefault(),
 			Salt:         contract.Salt,
+			Build:        cfg.BuildCommand(contract),
 		}
 	}
 

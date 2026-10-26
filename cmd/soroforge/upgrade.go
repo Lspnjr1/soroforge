@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"time"
 
@@ -18,6 +19,7 @@ func newUpgradeCmd() *cobra.Command {
 		requireSpec    bool
 		progress       bool
 		extendTTL      bool
+		buildFirst     bool
 		confirmTimeout time.Duration
 	)
 
@@ -43,6 +45,10 @@ Progress is written to stderr while waiting for confirmation, and only when
 stderr is a terminal, so stdout and --json stay clean. Use --progress to force
 it on in a pipe or log.
 
+--build runs the build command configured in soroforge.yaml first (see
+'soroforge build') and stops, with nothing submitted, if it fails. It cannot be
+combined with --wasm-hash, which upgrades to bytecode already on-chain.
+
 On a network marked protected: true in soroforge.yaml, a real upgrade prints
 what will happen and requires you to type the network name. --yes skips the
 prompt for CI; without a terminal on stdin and without --yes the command
@@ -51,6 +57,10 @@ refuses rather than hanging. --dry-run never prompts.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkConfirmTimeout(cmd.Flags().Changed("confirm-timeout"), confirmTimeout); err != nil {
 				return err
+			}
+			if buildFirst && wasmHash != "" {
+				return fmt.Errorf("--build and --wasm-hash are mutually exclusive: " +
+					"--wasm-hash upgrades to bytecode already on-chain, so there is nothing to build")
 			}
 
 			a, err := newApp(cmd.Context(), appOptions{
@@ -66,6 +76,11 @@ refuses rather than hanging. --dry-run never prompts.`,
 			networkName, network, err := a.cfg.Network(flags.network)
 			if err != nil {
 				return err
+			}
+			if buildFirst {
+				if err := buildBefore(cmd, a.cfg, "upgrade", args); err != nil {
+					return err
+				}
 			}
 			if err := confirmProtected(cmd.ErrOrStderr(), os.Stdin, stdinIsTerminal(),
 				networkName, network, "upgrade", args[0], yes, dryRun); err != nil {
@@ -94,6 +109,8 @@ refuses rather than hanging. --dry-run never prompts.`,
 		"assemble and simulate without submitting or recording anything")
 	cmd.Flags().BoolVar(&extendTTL, "extend-ttl", false,
 		"after confirming, extend the upgraded contract's TTLs to the network's maximum")
+	cmd.Flags().BoolVar(&buildFirst, "build", false,
+		"run the configured build command first and abort if it fails")
 	cmd.Flags().BoolVar(&yes, "yes", false,
 		"skip the typed confirmation on protected networks (for CI)")
 	cmd.Flags().StringVar(&notes, "notes", "",

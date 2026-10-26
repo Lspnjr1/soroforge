@@ -52,6 +52,12 @@ type Config struct {
 	// line and in the deployment history.
 	Contracts map[string]Contract `yaml:"contracts"`
 
+	// Build is the default command that compiles the project's contracts,
+	// e.g. "stellar contract build". A contract's own build overrides it.
+	// It runs only when asked for — `soroforge build`, or deploy/upgrade with
+	// --build — never implicitly, and never through a shell; see SplitCommand.
+	Build string `yaml:"build"`
+
 	// Env holds settings sourced from environment variables. It is populated
 	// by Load and is never read from the YAML file.
 	Env Env `yaml:"-"`
@@ -200,6 +206,9 @@ type Contract struct {
 	// Contract (SAC) SoroForge should deploy and track, e.g. "native" or
 	// "CODE:ISSUER". Mutually exclusive with Wasm.
 	Asset string `yaml:"asset"`
+
+	// Build overrides the top-level build command for this contract. Optional.
+	Build string `yaml:"build"`
 
 	// ConstructorArgs are passed to the contract's constructor at
 	// instantiation. Empty is valid and common. A network override may
@@ -443,6 +452,19 @@ func (c *Config) Contract(alias string) (Contract, error) {
 		return Contract{}, fmt.Errorf("unknown contract %q (configured: %s)", alias, joinKeys(c.Contracts))
 	}
 	return contract, nil
+}
+
+// BuildCommand returns the build command configured for contract: its own
+// build, else the top-level one, else "". Stellar Asset Contracts have no
+// artifact to build and always return "".
+func (c *Config) BuildCommand(contract Contract) string {
+	if contract.IsSAC() {
+		return ""
+	}
+	if cmd := strings.TrimSpace(contract.Build); cmd != "" {
+		return cmd
+	}
+	return strings.TrimSpace(c.Build)
 }
 
 // WasmPath returns the absolute path to a contract's WASM artifact, resolving

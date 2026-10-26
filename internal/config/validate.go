@@ -45,6 +45,12 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if strings.TrimSpace(c.Build) != "" {
+		if _, err := SplitCommand(c.Build); err != nil {
+			problems = append(problems, fmt.Sprintf("build: %v", err))
+		}
+	}
+
 	if len(c.Contracts) == 0 {
 		problems = append(problems, "contracts: at least one contract must be configured")
 	}
@@ -139,6 +145,9 @@ func validateContract(alias string, c Contract, networks map[string]Network) []s
 		if err := validateAsset(c.Asset); err != nil {
 			problems = append(problems, fmt.Sprintf("%s.asset: %v", prefix, err))
 		}
+		if strings.TrimSpace(c.Build) != "" {
+			problems = append(problems, prefix+": Stellar Asset Contracts have no WASM to build; build cannot be used")
+		}
 		if len(c.ConstructorArgs) > 0 {
 			problems = append(problems, prefix+": Stellar Asset Contracts do not take constructor args")
 		}
@@ -149,6 +158,12 @@ func validateContract(alias string, c Contract, networks map[string]Network) []s
 			problems = append(problems, prefix+": Stellar Asset Contracts are not initialized; init_fn and init_args cannot be used")
 		}
 	case hasWasm:
+		if strings.TrimSpace(c.Build) != "" {
+			if _, err := SplitCommand(c.Build); err != nil {
+				problems = append(problems, fmt.Sprintf("%s.build: %v", prefix, err))
+			}
+		}
+
 		for i, arg := range c.ConstructorArgs {
 			if _, err := arg.ToScVal(); err != nil {
 				problems = append(problems, fmt.Sprintf("%s.constructor_args[%d]: %v", prefix, i, err))
